@@ -1,9 +1,13 @@
+from os import name
+from re import S
+from platform import system
 import uuid
 from datetime import datetime, timezone
 
 from pydantic import EmailStr
 from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
+from sqlalchemy.dialects.postgresql import JSONB
 
 
 def get_datetime_utc() -> datetime:
@@ -53,7 +57,7 @@ class User(UserBase, table=True):
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
-    items: list["Item"] = Relationship(back_populates="owner", cascade_delete=True)
+    agents: list["Agent"] = Relationship(back_populates="owner", cascade_delete=True)
 
 
 # Properties to return via API, id is always required
@@ -67,24 +71,34 @@ class UsersPublic(SQLModel):
     count: int
 
 
+# -------------------------------------------------------------------------------------
+
+
 # Shared properties
-class ItemBase(SQLModel):
-    title: str = Field(min_length=1, max_length=255)
+class AgentBase(SQLModel):
+    name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=255)
+    system_prompt: str = Field()
+    tools_config: dict = Field(default={}, sa_type=JSONB)
+    is_public: bool = False
 
 
-# Properties to receive on item creation
-class ItemCreate(ItemBase):
+# Properties to receive on agent creation
+class AgentCreate(AgentBase):
     pass
 
 
-# Properties to receive on item update
-class ItemUpdate(ItemBase):
-    title: str | None = Field(default=None, min_length=1, max_length=255)  # type: ignore[assignment]
+# Properties to receive on agent update
+class AgentUpdate(AgentBase):
+    name: str | None = Field(default="Default Agent", min_length=1, max_length=255)  # type: ignore[assignment]
+    description: str | None = Field(default=None, max_length=255)
+    system_prompt: str | None = Field(default="You are a helpful assistant.")  # type: ignore[assignment]
+    tools_config: dict | None = Field(default={}, sa_type=JSONB)
+    is_public: bool | None = Field(default=False)
 
 
 # Database model, database table inferred from class name
-class Item(ItemBase, table=True):
+class Agent(AgentBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime | None = Field(
         default_factory=get_datetime_utc,
@@ -93,18 +107,58 @@ class Item(ItemBase, table=True):
     owner_id: uuid.UUID = Field(
         foreign_key="user.id", nullable=False, ondelete="CASCADE"
     )
-    owner: User | None = Relationship(back_populates="items")
+    owner: User | None = Relationship(back_populates="agents")
 
 
 # Properties to return via API, id is always required
-class ItemPublic(ItemBase):
+class AgentPublic(AgentBase):
     id: uuid.UUID
     owner_id: uuid.UUID
     created_at: datetime | None = None
 
 
-class ItemsPublic(SQLModel):
-    data: list[ItemPublic]
+class AgentsPublic(SQLModel):
+    data: list[AgentPublic]
+    count: int
+
+
+# -------------------------------------------------------------------------------------
+
+
+class ThreadBase(SQLModel):
+    name: str | None = Field(default="New Conversation", min_length=1, max_length=255)
+
+
+class ThreadCreate(ThreadBase):
+    pass
+
+class ThreadUpdate(ThreadBase):
+    pass
+
+class Thread(ThreadBase, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    last_modified: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    agent_id: uuid.UUID = Field(
+        foreign_key="agent.id", nullable=False, ondelete="CASCADE"
+    )
+    user_id: uuid.UUID = Field(
+        foreign_key="user.id", nullable=False, ondelete="CASCADE"
+    )
+
+
+class ThreadPublic(SQLModel):
+    id: uuid.UUID
+    name: str
+    agent_id: uuid.UUID
+    user_id: uuid.UUID
+    last_modified: datetime | None = None
+
+
+class ThreadsPublic(SQLModel):
+    data: list[ThreadPublic]
     count: int
 
 

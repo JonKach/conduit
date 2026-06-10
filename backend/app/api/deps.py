@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.db import engine
 from app.models import TokenPayload, User
 
+# This checks for the presence of the Authorization header and extracts the token from it. The tokenUrl parameter is just used by FastAPI to generate the correct URL for the login endpoint in the OpenAPI documentation.
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/login/access-token"
 )

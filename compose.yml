@@ -108,6 +108,11 @@ services:
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
+    volumes:
+      # Mounts your local backend folder to the container's backend folder
+      - ./backend:/app/backend
+      # Anonymous volume to protect the container's virtual environment from being overwritten by your host
+      - /app/.venv
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
