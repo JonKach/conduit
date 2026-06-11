@@ -37,10 +37,14 @@ def send_email(
     html_content: str = "",
 ) -> None:
     assert settings.emails_enabled, "no provided configuration for email variables"
+    # Ensure mail_from matches type expected by emails.Message: either a str or (name, email)
+    from_name = settings.EMAILS_FROM_NAME
+    from_email = settings.EMAILS_FROM_EMAIL or ""
+    mail_from = (from_name, from_email) if from_name else from_email
     message = emails.Message(
         subject=subject,
         html=html_content,
-        mail_from=(settings.EMAILS_FROM_NAME, settings.EMAILS_FROM_EMAIL),
+        mail_from=mail_from,
     )
     smtp_options = {"host": settings.SMTP_HOST, "port": settings.SMTP_PORT}
     if settings.SMTP_TLS:

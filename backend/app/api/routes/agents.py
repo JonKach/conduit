@@ -18,7 +18,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 @router.get("/", response_model=AgentsPublic)
-def read_agents(
+async def read_agents(
     session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100
 ) -> Any:
     """
@@ -27,21 +27,24 @@ def read_agents(
 
     if current_user.is_superuser:
         count_statement = select(func.count()).select_from(Agent)
-        count = session.exec(count_statement).one()
+        count = await session.exec(count_statement)
+        count = count.one()
         statement = (
             select(Agent)
             .order_by(col(Agent.created_at).desc())
             .offset(skip)
             .limit(limit)
         )
-        agents = session.exec(statement).all()
+        agents = await session.exec(statement)
+        agents = agents.all()
     else:
         count_statement = (
             select(func.count())
             .select_from(Agent)
             .where(Agent.owner_id == current_user.id)
         )
-        count = session.exec(count_statement).one()
+        count = await session.exec(count_statement)
+        count = count.one()
         statement = (
             select(Agent)
             .where(Agent.owner_id == current_user.id)
@@ -49,18 +52,19 @@ def read_agents(
             .offset(skip)
             .limit(limit)
         )
-        agents = session.exec(statement).all()
+        agents = await session.exec(statement)
+        agents = agents.all()
 
     agents_public = [AgentPublic.model_validate(agent) for agent in agents]
     return AgentsPublic(data=agents_public, count=count)
 
 
 @router.get("/{id}", response_model=AgentPublic)
-def read_agent(session: SessionDep, current_user: CurrentUser, id: uuid.UUID) -> Any:
+async def read_agent(session: SessionDep, current_user: CurrentUser, id: uuid.UUID) -> Any:
     """
     Get agent by ID.
     """
-    agent = session.get(Agent, id)
+    agent = await session.get(Agent, id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if not current_user.is_superuser and (agent.owner_id != current_user.id):
@@ -69,7 +73,7 @@ def read_agent(session: SessionDep, current_user: CurrentUser, id: uuid.UUID) ->
 
 
 @router.post("/", response_model=AgentPublic)
-def create_agent(
+async def create_agent(
     *, session: SessionDep, current_user: CurrentUser, agent_in: AgentCreate
 ) -> Any:
     """
@@ -77,13 +81,13 @@ def create_agent(
     """
     agent = Agent.model_validate(agent_in, update={"owner_id": current_user.id})
     session.add(agent)
-    session.commit()
-    session.refresh(agent)
+    await session.commit()
+    await session.refresh(agent)
     return agent
 
 
 @router.put("/{id}", response_model=AgentPublic)
-def update_agent(
+async def update_agent(
     *,
     session: SessionDep,
     current_user: CurrentUser,
@@ -93,7 +97,7 @@ def update_agent(
     """
     Update an agent.
     """
-    agent = session.get(Agent, id)
+    agent = await session.get(Agent, id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if not current_user.is_superuser and (agent.owner_id != current_user.id):
@@ -101,23 +105,23 @@ def update_agent(
     update_dict = agent_in.model_dump(exclude_unset=True)
     agent.sqlmodel_update(update_dict)
     session.add(agent)
-    session.commit()
-    session.refresh(agent)
+    await session.commit()
+    await session.refresh(agent)
     return agent
 
 
 @router.delete("/{id}")
-def delete_agent(
+async def delete_agent(
     session: SessionDep, current_user: CurrentUser, id: uuid.UUID
 ) -> Message:
     """
     Delete an agent.
     """
-    agent = session.get(Agent, id)
+    agent = await session.get(Agent, id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if not current_user.is_superuser and (agent.owner_id != current_user.id):
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    session.delete(agent)
-    session.commit()
+    await session.delete(agent)
+    await session.commit()
     return Message(message="Agent deleted successfully")
