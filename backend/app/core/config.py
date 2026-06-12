@@ -68,6 +68,15 @@ class Settings(BaseSettings):
             path=self.POSTGRES_DB,
         )
 
+    REDIS_SERVER: str
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def REDIS_URL(self) -> str:
+        return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_SERVER}:{self.REDIS_PORT}"
+
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
     SMTP_PORT: int = 587

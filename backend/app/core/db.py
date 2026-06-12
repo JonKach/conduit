@@ -1,5 +1,5 @@
 from six import u
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -9,6 +9,7 @@ from app.models import User, UserCreate
 
 engine = create_async_engine(str(settings.SQLALCHEMY_DATABASE_URI))
 
+AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 # make sure all SQLModel models are imported (app.models) before initializing DB
 # otherwise, SQLModel might fail to initialize relationships properly

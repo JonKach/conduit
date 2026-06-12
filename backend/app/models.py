@@ -1,13 +1,10 @@
-from os import name
-from re import S
-from platform import system
 import uuid
 from datetime import datetime, timezone
 
 from pydantic import EmailStr
 from sqlalchemy import DateTime
-from sqlmodel import Field, Relationship, SQLModel
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import Field, Relationship, SQLModel
 
 
 def get_datetime_utc() -> datetime:
@@ -107,14 +104,19 @@ class Agent(AgentBase, table=True):
     owner_id: uuid.UUID = Field(
         foreign_key="user.id", nullable=False, ondelete="CASCADE"
     )
-    owner: User | None = Relationship(back_populates="agents")
+    owner: "User" = Relationship(back_populates="agents")
 
 
 # Properties to return via API, id is always required
 class AgentPublic(AgentBase):
     id: uuid.UUID
-    owner_id: uuid.UUID
+    name: str
     created_at: datetime | None = None
+    owner_name: str | None = None
+    description: str | None = None
+    system_prompt: str | None = None
+    tools_config: dict | None = None
+    is_public: bool = False
 
 
 class AgentsPublic(SQLModel):
@@ -161,6 +163,9 @@ class ThreadsPublic(SQLModel):
     data: list[ThreadPublic]
     count: int
 
+class ChatRequest(SQLModel):
+    message: str
+    model: str
 
 # Generic message
 class Message(SQLModel):
