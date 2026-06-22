@@ -1,3 +1,4 @@
+import shortuuid
 import asyncio
 import json
 import re
@@ -41,7 +42,7 @@ async def create_thread(
     await session.refresh(db_thread)
     return ThreadPublic.model_validate(db_thread)
 
-async def redis_sse_generator(stream_id: uuid.UUID):
+async def redis_sse_generator(stream_id: str):
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(str(f"stream_{stream_id}"))
@@ -66,21 +67,21 @@ async def redis_sse_generator(stream_id: uuid.UUID):
 
 @router.post("/{thread_id}/stream")
 async def stream_thread_conversation(
-    agent: AllowedAgent, thread_id: uuid.UUID, request: ChatRequest
+    agent: AllowedAgent, thread_id: str, request: ChatRequest
 ) -> Any:
     """
     Send a message and stream the resulting conversation for a given thread.
     """
 
-    stream_id = uuid.uuid4()
+    stream_id = shortuuid.uuid()
     redis_client = Redis.from_url(settings.REDIS_URL)
 
     job_payload = {
         **agent.model_dump(mode="json"),
-        "thread_id": str(thread_id),
+        "thread_id": thread_id,
         "message": request.message,
         "model": request.model,
-        "stream_id": str(stream_id)
+        "stream_id": stream_id
     }
 
     await redis_client.lpush("agent_jobs_queue", json.dumps(job_payload))
@@ -94,7 +95,7 @@ async def stream_thread_conversation(
 
 @router.get("/", response_model=ThreadsPublic)
 async def read_threads(
-    session: SessionDep, current_user: CurrentUser, agent_id: uuid.UUID, skip: int = 0, limit: int = 100
+    session: SessionDep, current_user: CurrentUser, agent_id: str, skip: int = 0, limit: int = 100
 ) -> Any:
     """
     Retrieve threads for an agent.
@@ -124,7 +125,7 @@ async def read_threads(
 
 @router.get("/{thread_id}", response_model=ThreadPublic)
 async def read_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: uuid.UUID, thread_id: uuid.UUID
+    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str
 ) -> Any:
     """
     Retrieve a thread by ID.
@@ -144,7 +145,7 @@ async def read_thread(
 
 @router.patch("/{thread_id}", response_model=ThreadPublic)
 async def update_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: uuid.UUID, thread_id: uuid.UUID, thread_update: ThreadUpdate
+    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str, thread_update: ThreadUpdate
 ) -> Any:
     """
     Update a thread by ID.
@@ -168,7 +169,7 @@ async def update_thread(
 
 @router.delete("/{thread_id}")
 async def delete_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: uuid.UUID, thread_id: uuid.UUID
+    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str
 ) -> Message:
     """
     Delete a thread by ID.

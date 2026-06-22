@@ -1,3 +1,4 @@
+import shortuuid
 import uuid
 from datetime import datetime, timezone
 
@@ -5,6 +6,7 @@ from pydantic import EmailStr
 from sqlalchemy import DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
+from sqlalchemy.orm import Mapped
 
 
 def get_datetime_utc() -> datetime:
@@ -96,7 +98,7 @@ class AgentUpdate(AgentBase):
 
 # Database model, database table inferred from class name
 class Agent(AgentBase, table=True):
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    id: str = Field(default_factory=shortuuid.uuid, primary_key=True)
     created_at: datetime | None = Field(
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
@@ -104,12 +106,12 @@ class Agent(AgentBase, table=True):
     owner_id: uuid.UUID = Field(
         foreign_key="user.id", nullable=False, ondelete="CASCADE"
     )
-    owner: "User" = Relationship(back_populates="agents")
+    owner: Mapped[User] = Relationship(back_populates="agents")
 
 
 # Properties to return via API, id is always required
 class AgentPublic(AgentBase):
-    id: uuid.UUID
+    id: str
     name: str
     created_at: datetime | None = None
     owner_name: str | None = None
@@ -138,12 +140,12 @@ class ThreadUpdate(ThreadBase):
     pass
 
 class Thread(ThreadBase, table=True):
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    id: str = Field(default_factory=shortuuid.uuid, primary_key=True)
     last_modified: datetime | None = Field(
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
-    agent_id: uuid.UUID = Field(
+    agent_id: str = Field(
         foreign_key="agent.id", nullable=False, ondelete="CASCADE"
     )
     user_id: uuid.UUID = Field(
@@ -152,9 +154,9 @@ class Thread(ThreadBase, table=True):
 
 
 class ThreadPublic(SQLModel):
-    id: uuid.UUID
+    id: str
     name: str
-    agent_id: uuid.UUID
+    agent_id: str
     user_id: uuid.UUID
     last_modified: datetime | None = None
 

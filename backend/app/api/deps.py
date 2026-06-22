@@ -1,3 +1,5 @@
+from mypy.nodes import Statement
+from sqlmodel import select
 from httpx import Auth
 from collections.abc import AsyncGenerator
 from typing import Annotated
@@ -13,6 +15,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.models import Agent, TokenPayload, User
+from sqlalchemy.orm import selectinload
 
 # This checks for the presence of the Authorization header and extracts the token from it. The tokenUrl parameter is just used by FastAPI to generate the correct URL for the login endpoint in the OpenAPI documentation.
 reusable_oauth2 = OAuth2PasswordBearer(
@@ -59,7 +62,14 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
     return current_user
 
 async def get_agent(session: SessionDep, current_user: CurrentUser, agent_id: str):
-    agent = await session.get(Agent, agent_id)
+    statement = (
+        select(Agent)
+        .options(selectinload(Agent.owner))  # Load the owner relationship eagerly
+        .where(Agent.id == agent_id)
+        .limit(1)
+    )
+    agent = await session.exec(statement)
+    agent = agent.first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if not current_user.is_superuser and (agent.owner_id != current_user.id) and not agent.is_public:

@@ -10,3 +10,4 @@ node_modules/
 .env.development.local
 node_modules/
 .DS_Store
+.postman

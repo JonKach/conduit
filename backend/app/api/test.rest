@@ -1,41 +1,609 @@
-###
-# 1. First, get a token (assuming you have a user created)
-# @name login
-POST http://localhost:8000/api/v1/login/access-token
+# =============================================================================
+# API Test Suite
+# Base URL and shared variables
+# =============================================================================
+# Prerequisites: Install the REST Client extension for VS Code
+# Update @baseUrl, @superuserToken, @userToken, @agentId, @threadId as needed
+
+@baseUrl = http://localhost:8000/api/v1
+@contentType = application/json
+
+# Tokens — populate these after running the login requests below
+@superuserToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODI3ODQ2NTIsInN1YiI6IjhkNTAxNmI5LTMzZjItNDIwYy04MzkxLWY5NmMxYzUwM2Y4OCJ9.VcRTLhHynE8oXzX6v4uDRgopOEmV48lglEGZXz2UG5w
+@userToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODI3ODIwNzcsInN1YiI6ImM2MjA4NDZmLWNjNDEtNDg4Yi1hYTUzLTI4ZmY3NTE5M2VkNiJ9.ZWUwwWfPxPyDtsLk9QDYUsysrohR7n32JH_m11d7FlM
+
+# IDs — populate these after creating resources
+@agentId = b3LirMhPh2VUqRqiU5MJby
+@threadId = Pyh2UCXcZv2df9jgN6uALE
+@userId = 8d5016b9-33f2-420c-8391-f96c1c503f88
+
+
+# =============================================================================
+# AUTH — Login
+# =============================================================================
+
+### Login as superuser → copy access_token into @superuserToken
+# @name loginSuperuser
+POST {{baseUrl}}/login/access-token
 Content-Type: application/x-www-form-urlencoded
 
 username=admin@example.com&password=changethis
 
-###
-# 2. Use the token to create an agent
-# @name create_agent
-@token = {{login.response.body.access_token}}
-
-POST http://localhost:8000/api/v1/agents/ HTTP/1.1
+### Register a new user (if needed for testing) → copy access_token into @userToken
+POST {{baseUrl}}/users/signup
 Content-Type: application/json
-Authorization: Bearer {{token}}
 
 {
-    "name": "Test Agent 2",
-    "description": "This is a second test agent.",
-    "system_prompt": "You are a helpful testing assistant.",
-    "tools_config": {},
-    "is_public": false
+  "email": "user@example.com",
+  "password": "userpassword",
+  "full_name": "Regular User"
 }
 
-###
-# 3. Use the token to create a thread for the agent
-@agent_id = {{create_agent.response.body.id}}
+### Login as regular user → copy access_token into @userToken
+# @name loginUser
+POST {{baseUrl}}/login/access-token
+Content-Type: application/x-www-form-urlencoded
 
-POST http://localhost:8000/api/v1/agents/{{agent_id}}/threads/
-Content-Type: application/json
-Authorization: Bearer {{token}}
+username=user@example.com&password=userpassword
+
+
+# =============================================================================
+# USERS
+# =============================================================================
+
+### [SUPERUSER] List all users
+GET {{baseUrl}}/users/
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [SUPERUSER] List users — with pagination
+GET {{baseUrl}}/users/?skip=0&limit=10
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [SUPERUSER] Create a new user
+POST {{baseUrl}}/users/
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
 
 {
-    "name": "Test Thread"
+  "email": "newuser@example.com",
+  "password": "securepassword123",
+  "full_name": "New User",
+  "is_active": true,
+  "is_superuser": false
 }
 
-###
+### [SUPERUSER] Create user — duplicate email (expect 400)
+POST {{baseUrl}}/users/
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
 
-DELETE http://localhost:8000/api/v1/agents/{{agent_id}}
-Authorization: Bearer {{token}}
+{
+  "email": "newuser@example.com",
+  "password": "securepassword123",
+  "full_name": "Duplicate User",
+  "is_active": true,
+  "is_superuser": false
+}
+
+### [SUPERUSER] Create user — invalid email (expect 422)
+POST {{baseUrl}}/users/
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+{
+  "email": "not-an-email",
+  "password": "securepassword123",
+  "full_name": "Bad Email User"
+}
+
+### [SUPERUSER] Create user — password too short (expect 422)
+POST {{baseUrl}}/users/
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+{
+  "email": "shortpw@example.com",
+  "password": "short",
+  "full_name": "Short Password User"
+}
+
+### [ANY USER] Register (public signup)
+POST {{baseUrl}}/users/signup
+Content-Type: {{contentType}}
+
+{
+  "email": "selfsignup@example.com",
+  "password": "securepassword123",
+  "full_name": "Self Signup User"
+}
+
+### [ANY USER] Register — duplicate email (expect 400)
+POST {{baseUrl}}/users/signup
+Content-Type: {{contentType}}
+
+{
+  "email": "selfsignup@example.com",
+  "password": "securepassword123",
+  "full_name": "Duplicate Signup"
+}
+
+### [AUTH] Get current user (me)
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Update current user (me)
+PATCH {{baseUrl}}/users/me
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "full_name": "Updated Name",
+  "email": "updated@example.com"
+}
+
+### [AUTH] Update current user — email already taken by another user (expect 409)
+PATCH {{baseUrl}}/users/me
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "email": "admin@example.com"
+}
+
+### [AUTH] Change own password
+PATCH {{baseUrl}}/users/me/password
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "current_password": "userpassword",
+  "new_password": "newpassword456"
+}
+
+### [AUTH] Change own password — wrong current password (expect 400)
+PATCH {{baseUrl}}/users/me/password
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "current_password": "wrongpassword",
+  "new_password": "newpassword456"
+}
+
+### [AUTH] Change own password — same as current (expect 400)
+PATCH {{baseUrl}}/users/me/password
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "current_password": "userpassword",
+  "new_password": "userpassword"
+}
+
+### [SUPERUSER] Get user by ID
+GET {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [SUPERUSER] Get user by ID — not found (expect 404)
+GET {{baseUrl}}/users/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [REGULAR USER] Get another user by ID — insufficient privileges (expect 403)
+GET {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [SUPERUSER] Update a user by ID
+PATCH {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+{
+  "email": "patchedbysuper@example.com",
+  "full_name": "Patched By Super",
+  "is_active": true,
+  "is_superuser": false,
+  "password": "newpassword789"
+}
+
+### [SUPERUSER] Update user — email conflict (expect 409)
+PATCH {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+{
+  "email": "admin@example.com",
+  "full_name": "Conflict Test",
+  "is_active": true,
+  "is_superuser": false,
+  "password": "newpassword789"
+}
+
+### [SUPERUSER] Update user — user not found (expect 404)
+PATCH {{baseUrl}}/users/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+{
+  "email": "ghost@example.com",
+  "full_name": "Ghost",
+  "is_active": true,
+  "is_superuser": false,
+  "password": "newpassword789"
+}
+
+### [SUPERUSER] Delete a user by ID
+DELETE {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+
+### [SUPERUSER] Delete user — not found (expect 404)
+DELETE {{baseUrl}}/users/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+
+
+### [SUPERUSER] Delete self as superuser (expect 403)
+DELETE {{baseUrl}}/users/{{userId}}
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Delete own account
+DELETE {{baseUrl}}/users/me
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Delete own account — superuser self-delete (expect 403)
+DELETE {{baseUrl}}/users/me
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### Unauthenticated request — no token (expect 401/403)
+GET {{baseUrl}}/users/me
+
+
+# =============================================================================
+# AGENTS
+# =============================================================================
+
+### [AUTH] List own agents
+GET {{baseUrl}}/agents/me
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] List own agents — with pagination
+GET {{baseUrl}}/agents/me?skip=0&limit=5
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] List public agents (regular user sees only is_public=true)
+GET {{baseUrl}}/agents/public
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [SUPERUSER] List public agents (superuser sees all agents)
+GET {{baseUrl}}/agents/public
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Create a new agent
+POST {{baseUrl}}/agents/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Private Agent",
+  "description": "A test agent",
+  "system_prompt": "You are a helpful assistant.",
+  "tools_config": {},
+  "is_public": false
+}
+
+### [AUTH] Create a public agent
+POST {{baseUrl}}/agents/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Public Agent",
+  "description": "Visible to everyone",
+  "system_prompt": "You are a public assistant.",
+  "tools_config": {},
+  "is_public": true
+}
+
+### [AUTH] Create agent — missing required field (name) (expect 422)
+POST {{baseUrl}}/agents/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "description": "No name agent",
+  "system_prompt": "You are an assistant.",
+  "tools_config": {},
+  "is_public": false
+}
+
+### [AUTH] Create agent — name too short (expect 422)
+POST {{baseUrl}}/agents/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "",
+  "system_prompt": "You are an assistant.",
+  "tools_config": {},
+  "is_public": false
+}
+
+### [AUTH] Get agent by ID (owner access)
+GET {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [SUPERUSER] Get agent by ID (superuser access)
+GET {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Get agent — not found (expect 404)
+GET {{baseUrl}}/agents/nonexistentAgentId12345
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Get private agent owned by another user (expect 403)
+# Requires agentId to belong to a different user and is_public=false
+GET {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Update agent (full update, owner)
+PUT {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Updated Agent Name",
+  "description": "Updated description",
+  "system_prompt": "You are an updated assistant.",
+  "tools_config": {"key": "value"},
+  "is_public": true
+}
+
+### [AUTH] Update agent — not found (expect 404)
+PUT {{baseUrl}}/agents/nonexistentAgentId12345
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Ghost Update",
+  "description": "Should not exist",
+  "system_prompt": "N/A",
+  "tools_config": {},
+  "is_public": false
+}
+
+---
+
+### [AUTH] Delete agent (owner)
+DELETE {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [SUPERUSER] Delete any agent
+DELETE {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{superuserToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Delete agent owned by another user (expect 403)
+DELETE {{baseUrl}}/agents/{{agentId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Delete agent — not found (expect 404)
+DELETE {{baseUrl}}/agents/nonexistentAgentId12345
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+
+# =============================================================================
+# THREADS  (nested under /agents/{agent_id}/threads)
+# =============================================================================
+
+### [AUTH] Create a new thread
+POST {{baseUrl}}/agents/{{agentId}}/threads/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "My First Thread"
+}
+
+### [AUTH] Create thread — default name (omit name field)
+POST {{baseUrl}}/agents/{{agentId}}/threads/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{}
+
+### [AUTH] Create thread — agent not found (expect 404)
+POST {{baseUrl}}/agents/nonexistentAgentId12345/threads/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Thread for ghost agent"
+}
+
+### [AUTH] Create thread — no access to private agent (expect 403)
+# agentId must be a private agent owned by a different user
+POST {{baseUrl}}/agents/{{agentId}}/threads/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Unauthorized thread"
+}
+
+### [AUTH] List threads for an agent
+GET {{baseUrl}}/agents/{{agentId}}/threads/
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] List threads — with pagination
+GET {{baseUrl}}/agents/{{agentId}}/threads/?skip=0&limit=5
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Get thread by ID
+GET {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Get thread — not found (expect 404)
+GET {{baseUrl}}/agents/{{agentId}}/threads/nonexistentThreadId
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Get thread — wrong agent_id (expect 404)
+GET {{baseUrl}}/agents/wrongAgentId/threads/{{threadId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Update thread name
+PATCH {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Renamed Thread"
+}
+
+### [AUTH] Update thread — not found (expect 404)
+PATCH {{baseUrl}}/agents/{{agentId}}/threads/nonexistentThreadId
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "name": "Ghost Thread Rename"
+}
+
+### [AUTH] Stream a message in a thread
+POST {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}/stream
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "message": "Hello, what can you help me with?",
+  "model": "claude-sonnet-4-6"
+}
+
+### [AUTH] Stream — agent not found (expect 404)
+POST {{baseUrl}}/agents/nonexistentAgentId12345/threads/{{threadId}}/stream
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "message": "Hello?",
+  "model": "claude-sonnet-4-6"
+}
+
+---
+
+### [AUTH] Stream — missing message field (expect 422)
+POST {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}/stream
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "model": "claude-sonnet-4-6"
+}
+
+---
+
+### [AUTH] Stream — missing model field (expect 422)
+POST {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}/stream
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "message": "Hello?"
+}
+
+---
+
+### [AUTH] Delete thread by ID
+DELETE {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Delete thread — not found (expect 404)
+DELETE {{baseUrl}}/agents/{{agentId}}/threads/nonexistentThreadId
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+---
+
+### [AUTH] Delete thread — wrong agent_id (expect 404)
+DELETE {{baseUrl}}/agents/wrongAgentId/threads/{{threadId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}

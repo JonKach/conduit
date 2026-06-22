@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import update
+from sqlalchemy.orm import selectinload
 from sqlmodel import col, func, select
 
 from app.api.deps import AllowedAgent, CurrentUser, SessionDep
@@ -59,6 +60,7 @@ async def read_public_agents(
         count = count.one()
         statement = (
             select(Agent)
+            .options(selectinload(Agent.owner))  # Load the owner relationship eagerly
             .order_by(col(Agent.created_at).desc())
             .offset(skip)
             .limit(limit)
@@ -75,6 +77,7 @@ async def read_public_agents(
         count = count.one()
         statement = (
             select(Agent)
+            .options(selectinload(Agent.owner))  # Load the owner relationship eagerly
             .where(Agent.is_public)
             .order_by(col(Agent.created_at).desc())
             .offset(skip)
@@ -130,9 +133,9 @@ async def update_agent(
     return agent
 
 
-@router.delete("/{id}")
+@router.delete("/{agent_id}")
 async def delete_agent(
-    session: SessionDep, current_user: CurrentUser, agent_id: uuid.UUID
+    session: SessionDep, current_user: CurrentUser, agent_id: str
 ) -> Message:
     """
     Delete an agent.

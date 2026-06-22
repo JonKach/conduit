@@ -21,6 +21,7 @@ dependencies = [
     "pwdlib[argon2,bcrypt]>=0.3.0",
     "asyncpg>=0.31.0",
     "redis>=8.0.0",
+    "shortuuid>=1.0.13",
 ]
 
 [dependency-groups]
