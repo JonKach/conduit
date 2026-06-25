@@ -68,9 +68,24 @@ class Settings(BaseSettings):
             path=self.POSTGRES_DB,
         )
 
+    @computed_field
+    @property
+    def SYNC_SQLALCHEMY_DATABASE_URI(self) -> PostgresDsn:
+        return PostgresDsn.build(
+            scheme="postgresql",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.POSTGRES_SERVER,
+            port=self.POSTGRES_PORT,
+            path=self.POSTGRES_DB,
+        )
+
     REDIS_SERVER: str
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str
+
+    GOOGLE_API_KEY: str = ""
+    TAVILY_API_KEY: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -1,3 +1,4 @@
+from turtle import st
 import shortuuid
 import uuid
 from datetime import datetime, timezone
@@ -5,7 +6,7 @@ from datetime import datetime, timezone
 from pydantic import EmailStr
 from sqlalchemy import DateTime
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, Relationship, SQLModel, Column, JSON
 from sqlalchemy.orm import Mapped
 
 
@@ -78,7 +79,7 @@ class AgentBase(SQLModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=255)
     system_prompt: str = Field()
-    tools_config: dict = Field(default={}, sa_type=JSONB)
+    tools_config: list[str] = Field(default=[], sa_column=Column(JSON))
     is_public: bool = False
 
 
@@ -92,7 +93,7 @@ class AgentUpdate(AgentBase):
     name: str | None = Field(default="Default Agent", min_length=1, max_length=255)  # type: ignore[assignment]
     description: str | None = Field(default=None, max_length=255)
     system_prompt: str | None = Field(default="You are a helpful assistant.")  # type: ignore[assignment]
-    tools_config: dict | None = Field(default={}, sa_type=JSONB)
+    tools_config: list[str] = Field(default=[], sa_column=Column(JSON))
     is_public: bool | None = Field(default=False)
 
 
@@ -117,7 +118,7 @@ class AgentPublic(AgentBase):
     owner_name: str | None = None
     description: str | None = None
     system_prompt: str | None = None
-    tools_config: dict | None = None
+    tools_config: list[str] | None = None
     is_public: bool = False
 
 

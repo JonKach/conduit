@@ -21,6 +21,20 @@ from app.core.config import settings # noqa
 
 target_metadata = SQLModel.metadata
 
+def include_object(object, name, type_, reflected, compare_to):
+    # Ignore LangGraph state and store tables during autogenerate
+    ignored_tables = {
+        "checkpoints", 
+        "checkpoint_writes", 
+        "checkpoint_blobs", 
+        "checkpoint_runs", 
+        "store",
+        "store_migrations",
+        "checkpoint_migrations",
+    }
+    if type_ == "table" and name in ignored_tables:
+        return False
+    return True
 
 def get_url():
     return str(settings.SQLALCHEMY_DATABASE_URI)
@@ -45,7 +59,8 @@ def do_run_migrations(connection):
     context.configure(
         connection=connection, 
         target_metadata=target_metadata, 
-        compare_type=True
+        compare_type=True,
+        include_object=include_object
     )
 
     with context.begin_transaction():

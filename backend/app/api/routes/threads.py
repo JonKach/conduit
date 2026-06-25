@@ -42,53 +42,73 @@ async def create_thread(
     await session.refresh(db_thread)
     return ThreadPublic.model_validate(db_thread)
 
-async def redis_sse_generator(stream_id: str):
+async def redis_sse_generator(thread_id: str, last_id: str = '0'):
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe(str(f"stream_{stream_id}"))
+
     try:
         while True:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if message:
-                msg_str = message["data"] #this "data" field is from the redis pubsub message, not to be confused with the "data" field in the SSE payload we send to the client
-                payload = json.loads(msg_str)
+            events = await redis_client.xread({thread_id: last_id}, count=1, block=1000)  # Block for 1 second
 
-                # SSE format
-                yield f"data: {msg_str}\n\n"
-
-                if payload.get("type") in ["done", "error"]:
-                    break
-            else:
+            if not events:
                 await asyncio.sleep(0.1)  # Sleep briefly to avoid busy waiting
+                continue
+
+            for _, messages in events:
+                for message_id, message_data in messages: #type: ignore
+                    last_id = message_id  # Update last_id to the latest message ID
+                    payload: dict = message_data #type: ignore
+
+                    # SSE format
+                    yield f"data: {message_data} @ message_id {message_id}\n\n"
+
+                    if payload.get("type") in ["done", "error"]:
+                        return
+
+            # if message:
+            #     print(f"Received message from Redis for stream {stream_id}: {message}")
+            #     msg_str = message["data"] #this "data" field is from the redis pubsub message, not to be confused with the "data" field in the SSE payload we send to the client
+            #     payload = json.loads(msg_str)
+
+            #     # SSE format
+            #     yield f"data: {msg_str}\n\n"
+
+            #     if payload.get("type") in ["done", "error"]:
+            #         break
+            # else:
+            #     await asyncio.sleep(0.1)  # Sleep briefly to avoid busy waiting
     finally:
-        await pubsub.unsubscribe(str(f"stream_{stream_id}"))
-        await pubsub.close()
         await redis_client.close()
 
 @router.post("/{thread_id}/stream")
 async def stream_thread_conversation(
-    agent: AllowedAgent, thread_id: str, request: ChatRequest
+    agent: AllowedAgent, current_user: CurrentUser, thread_id: str, request: ChatRequest
 ) -> Any:
     """
     Send a message and stream the resulting conversation for a given thread.
     """
 
-    stream_id = shortuuid.uuid()
     redis_client = Redis.from_url(settings.REDIS_URL)
+
+   ## MAKE SURE TO RATE LIMIT USERS AND STUFF SO KEY IS NOT OVERUSED.
 
     job_payload = {
         **agent.model_dump(mode="json"),
         "thread_id": thread_id,
+        "user_id": str(current_user.id),
         "message": request.message,
-        "model": request.model,
-        "stream_id": stream_id
+        "model": request.model
     }
+    try:
+        stream_info = await redis_client.xinfo_stream(thread_id)
+    except Exception as e:
+        stream_info = None
+    last_id = stream_info['last-generated-id'] if stream_info else '0'
 
     await redis_client.lpush("agent_jobs_queue", json.dumps(job_payload))
     await redis_client.close()
 
     return StreamingResponse(
-        redis_sse_generator(stream_id),
+        redis_sse_generator(thread_id, last_id),
         media_type="text/event-stream"
     )
 
