@@ -135,6 +135,11 @@ async def execute_agent(redis_client, checkpointer, store, job):
             await redis_client.xadd(job.thread_id, payload)
             await redis_client.expire(job.thread_id, 3600)
 
+        await asyncio.sleep(0.1)  # Ensure all messages are processed before fetching the final state
+        state_tuple = await agent.aget_state(config)
+        messages = state_tuple.values["messages"]
+        print("\nSaved Messages:", messages)
+
         print(f"\n----------Entire stream state for thread {job.thread_id}----------\n")
         final_output = await stream.output()
         print("\n")
@@ -163,7 +168,8 @@ async def main():
     # 2. Use a proper ConnectionPool to handle concurrent calls safely
     redis_pool = ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True, max_connections=50,  socket_timeout=10)
     redis_client = Redis(connection_pool=redis_pool)
-    postgres_pool = AsyncConnectionPool(conninfo=str(settings.SYNC_SQLALCHEMY_DATABASE_URI), max_size=10, open=True, kwargs={"row_factory": dict_row})
+    postgres_pool = AsyncConnectionPool(conninfo=str(settings.SYNC_SQLALCHEMY_DATABASE_URI), max_size=10, open=True, kwargs={"autocommit": True, "row_factory": dict_row})
+    print("AUTOCOMMITTING POSTGRES CONNECTIONS")
     # The type checker expects an AsyncConnectionPool whose AsyncConnection returns dict rows;
     typed_postgres_pool = cast(AsyncConnectionPool[AsyncConnection[dict[str, Any]]], postgres_pool)
     checkpointer = AsyncPostgresSaver(typed_postgres_pool)
@@ -208,8 +214,6 @@ async def main():
         # Clean up connection resources on exit
         await redis_client.aclose()
         await redis_pool.disconnect()
-        await checkpointer.close()
-        await store.close()
         await postgres_pool.close()
 
 if __name__ == "__main__":

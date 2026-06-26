@@ -1,3 +1,4 @@
+from alembic.command import check
 import shortuuid
 import asyncio
 import json
@@ -6,7 +7,7 @@ import uuid
 from typing import Any
 
 from alembic.util import msg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy.testing.config import db
@@ -23,7 +24,11 @@ from app.models import (
     ThreadPublic,
     ThreadsPublic,
     ThreadUpdate,
+    ThreadContentPublic
 )
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langchain_core.runnables import RunnableConfig
+
 
 router = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"])
 
@@ -143,9 +148,9 @@ async def read_threads(
     threads_public = [ThreadPublic.model_validate(thread) for thread in threads]
     return ThreadsPublic(data=threads_public, count=count)
 
-@router.get("/{thread_id}", response_model=ThreadPublic)
+@router.get("/{thread_id}", response_model=ThreadContentPublic)
 async def read_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str
+    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str, request: Request
 ) -> Any:
     """
     Retrieve a thread by ID.
@@ -160,8 +165,22 @@ async def read_thread(
     db_thread = db_thread.first()
     if not db_thread:
         raise HTTPException(status_code=404, detail="Thread not found")
-    return ThreadPublic.model_validate(db_thread)
-    ##ALSO RETURN ACTUAL CHECKPOINTS (MESSAGE HISTORY) FOR THIS THREAD IN THE RESPONSE
+
+    agent = request.app.state.read_agent
+    config = {"configurable": {"thread_id": thread_id}}
+    messages = (await agent.aget_state(config)).values["messages"]
+    output_messages = []
+    for message in messages:
+        if message.type == "human":
+            output_messages.append({"type": "human", "content": message.content})
+        elif message.type == "ai":
+            output_messages.append({"type": "ai", "content": message.content, "usage": message.usage_metadata})
+        elif message.type == "tool":
+            output_messages.append({"type": "tool", "content": message.content})
+        else:
+            output_messages.append({"type": "unknown", "content": message.content})
+
+    return ThreadContentPublic.model_validate(db_thread, update={"messages": output_messages})
 
 @router.patch("/{thread_id}", response_model=ThreadPublic)
 async def update_thread(
@@ -208,3 +227,4 @@ async def delete_thread(
     await session.commit()
     return Message(message="Thread deleted successfully")
     ##ALSO DELETE ALL CHECKPOINTS (MESSAGE HISTORY) FOR THIS THREAD
+    ##this must also trigger when the agent is deleted

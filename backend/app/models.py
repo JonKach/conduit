@@ -1,3 +1,4 @@
+from pyexpat.errors import messages
 from turtle import st
 import shortuuid
 import uuid
@@ -165,6 +166,9 @@ class ThreadPublic(SQLModel):
 class ThreadsPublic(SQLModel):
     data: list[ThreadPublic]
     count: int
+
+class ThreadContentPublic(ThreadPublic):
+    messages: list[dict]
 
 class ChatRequest(SQLModel):
     message: str
