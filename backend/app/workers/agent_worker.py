@@ -82,14 +82,16 @@ async def execute_agent(redis_client, checkpointer, store, job):
             if tool is not None:
                 agent_tools.append(tool)
 
+        corrected_system_prompt = f"System Prompt: {job.system_prompt}\n\nYou are a helpful assistant. Please follow the system prompt instructions carefully. Also, ensure that you use the tools provided to you when necessary. If a tool is not available, respond accordingly. Store all user preferences and important information in /memories/MEMORY.md for future reference. Skill files are located in /skills/ and can be used to enhance your capabilities. Remember to always check the system prompt for specific instructions."
+
         agent = create_deep_agent(
             model=job.model,
-            system_prompt=job.system_prompt,
+            system_prompt=corrected_system_prompt,
             tools=agent_tools,
             checkpointer=checkpointer,
             store=store,
-            memory=["./AGENTS.md"],
-            skills=["./skills/"],
+            memory=["/memories/MEMORY.md"],
+            skills=["/skills/"],
             backend=CompositeBackend(
                 default=StateBackend(), # Per-thread state
                 routes={
@@ -126,7 +128,7 @@ async def execute_agent(redis_client, checkpointer, store, job):
                 print(f"\n\nUsage for job {job.id}: {usage}")
 
             payload = {
-                "type": "done",
+                "type": "finalized",
                 "data": json.dumps({ #this is now a string, decode on frontend
                     "message": str(full_message.content),
                     "usage": str(usage),
@@ -134,6 +136,15 @@ async def execute_agent(redis_client, checkpointer, store, job):
             }
             await redis_client.xadd(job.thread_id, payload)
             await redis_client.expire(job.thread_id, 3600)
+
+        payload = {
+            "type": "done",
+            "data": json.dumps({ #this is now a string, decode on frontend
+                "message": "stream closed"
+            }),
+        }
+        await redis_client.xadd(job.thread_id, payload)
+        await redis_client.expire(job.thread_id, 3600)
 
         await asyncio.sleep(0.1)  # Ensure all messages are processed before fetching the final state
         state_tuple = await agent.aget_state(config)

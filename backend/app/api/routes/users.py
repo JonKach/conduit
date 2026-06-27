@@ -1,8 +1,8 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import col, delete, func, select
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from sqlmodel import col, delete, func, select, update, Session
 
 from app import crud
 from app.api.deps import (
@@ -23,8 +23,14 @@ from app.models import (
     UsersPublic,
     UserUpdate,
     UserUpdateMe,
+    Thread
 )
 from app.utils import generate_new_account_email, send_email
+
+from .utils import delete_langgraph_threads, delete_agent_store, delete_user_memories
+import asyncio
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -130,21 +136,6 @@ async def read_user_me(current_user: CurrentUser) -> Any:
     """
     return current_user
 
-
-@router.delete("/me", response_model=Message)
-async def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any:
-    """
-    Delete own user.
-    """
-    if current_user.is_superuser:
-        raise HTTPException(
-            status_code=403, detail="Super users are not allowed to delete themselves"
-        )
-    await session.delete(current_user)
-    await session.commit()
-    return Message(message="User deleted successfully")
-
-
 @router.post("/signup", response_model=UserPublic)
 async def register_user(session: SessionDep, user_in: UserRegister) -> Any:
     """
@@ -212,10 +203,61 @@ async def update_user(
     db_user = await crud.update_user(session=session, db_user=db_user, user_in=user_in)
     return db_user
 
+async def handle_user_deletion(user: User, session: SessionDep, background_tasks: BackgroundTasks, request: Request, transfer_ownership_to_user_id: uuid.UUID):
+
+    statement = select(Agent.id).where(Agent.owner_id == user.id).where(col(Agent.is_public).is_(False))
+    private_agent_ids = (await session.exec(statement)).all()
+
+    statement = select(Thread.id).where(Thread.user_id == user.id)
+    thread_ids = (await session.exec(statement)).all()
+
+    if thread_ids:
+        background_tasks.add_task(
+            delete_langgraph_threads,
+            list(thread_ids),
+            request.app.state.connection_pool
+        )
+
+    if private_agent_ids:
+        background_tasks.add_task(delete_agent_store, list(private_agent_ids), request.app.state.connection_pool)
+
+    background_tasks.add_task(delete_user_memories, str(user.id), request.app.state.connection_pool)
+
+    # Transfer ownership of public agents to the current superuser
+    transfer_statement = (
+        update(Agent)
+        .where(col(Agent.owner_id) == user.id)
+        .where(col(Agent.is_public).is_(True))
+        .values(owner_id=transfer_ownership_to_user_id)
+    )
+    await session.exec(transfer_statement)
+
+    await session.delete(user)
+    await session.commit()
+
+@router.delete("/me", response_model=Message)
+async def delete_user_me(session: SessionDep, current_user: CurrentUser, request: Request, background_tasks: BackgroundTasks) -> Any:
+    """
+    Delete own user.
+    """
+    if current_user.is_superuser:
+        raise HTTPException(
+            status_code=403, detail="Super users are not allowed to delete themselves"
+        )
+
+    statement = select(User.id).where(col(User.is_superuser).is_(True)).limit(1)
+    superuser_id = (await session.exec(statement)).first()
+    if not superuser_id:
+        raise HTTPException(status_code=404, detail="Superuser not found")
+
+    await handle_user_deletion(user=current_user, session=session, background_tasks=background_tasks, request=request, transfer_ownership_to_user_id=superuser_id)
+
+    return Message(message="User deleted successfully")
+
 
 @router.delete("/{user_id}", dependencies=[Depends(get_current_active_superuser)])
 async def delete_user(
-    session: SessionDep, current_user: CurrentUser, user_id: uuid.UUID
+    session: SessionDep, current_user: CurrentUser, user_id: uuid.UUID, request: Request, background_tasks: BackgroundTasks
 ) -> Message:
     """
     Delete a user.
@@ -227,8 +269,7 @@ async def delete_user(
         raise HTTPException(
             status_code=403, detail="Super users are not allowed to delete themselves"
         )
-    statement = delete(Agent).where(col(Agent.owner_id) == user_id)
-    await session.exec(statement)
-    await session.delete(user)
-    await session.commit()
+
+    await handle_user_deletion(user=user, session=session, background_tasks=background_tasks, request=request, transfer_ownership_to_user_id=current_user.id)
+
     return Message(message="User deleted successfully")

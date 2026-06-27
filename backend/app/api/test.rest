@@ -9,11 +9,11 @@
 @contentType = application/json
 
 # Tokens — populate these after running the login requests below
-@superuserToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODMwMTA2NTEsInN1YiI6IjhkNTAxNmI5LTMzZjItNDIwYy04MzkxLWY5NmMxYzUwM2Y4OCJ9.Zk937BWl8Qdx6Exg_Z390LQVk1YUMiYS7vc91ol_eUM
-@userToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODI3ODIwNzcsInN1YiI6ImM2MjA4NDZmLWNjNDEtNDg4Yi1hYTUzLTI4ZmY3NTE5M2VkNiJ9.ZWUwwWfPxPyDtsLk9QDYUsysrohR7n32JH_m11d7FlM
+@superuserToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODMyODc4NTcsInN1YiI6ImVlYzhlMzFiLTUyZDgtNDFhMC1hYWI3LTcyNTg1ZjE3ZWM2YyJ9.fd2eooEMM4BNHNisTpbXb-iNUtTlbKrjfMViEZKmQI4
+@userToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODMyODc5NDAsInN1YiI6IjdjODVkMjllLTcyZmItNGRmNi04YzIzLTk0MGIwNTUwOTQ4NCJ9.VadFh0jRK6ASYj-Kv_P4N0e0OeK_6pRfZpuaJ90a7rk
 
 # IDs — populate these after creating resources
-@agentId = PRQ6HJ98hoVBu3nUA97gCm
+@agentId = 5EDAE23GsbRKxgBjiVfgKn
 @threadId = ghpr3dBvERKgaKitWRRzUH
 @userId = 8d5016b9-33f2-420c-8391-f96c1c503f88
 
@@ -71,8 +71,8 @@ Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
 
 {
-  "email": "newuser@example.com",
-  "password": "securepassword123",
+  "email": "user@example.com",
+  "password": "userpassword",
   "full_name": "New User",
   "is_active": true,
   "is_superuser": false
@@ -328,7 +328,7 @@ Content-Type: {{contentType}}
   "name": "Private Agent",
   "description": "A test agent",
   "system_prompt": "You are a helpful assistant.",
-  "tools_config": {},
+  "tools_config": [],
   "is_public": false
 }
 
@@ -463,7 +463,7 @@ Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
 {
-  "name": "My First Thread"
+  "name": "User's thread"
 }
 
 ### [AUTH] Create thread — default name (omit name field)

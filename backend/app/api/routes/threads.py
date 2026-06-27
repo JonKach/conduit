@@ -86,11 +86,23 @@ async def redis_sse_generator(thread_id: str, last_id: str = '0'):
 
 @router.post("/{thread_id}/stream")
 async def stream_thread_conversation(
-    agent: AllowedAgent, current_user: CurrentUser, thread_id: str, request: ChatRequest
+    agent: AllowedAgent, current_user: CurrentUser, thread_id: str, request: ChatRequest, session: SessionDep
 ) -> Any:
     """
     Send a message and stream the resulting conversation for a given thread.
     """
+
+    #TODO: Add validation to ensure the thread belongs to the agent and user, and that the thread exists.
+    statement = (
+        select(Thread)
+        .where(Thread.id == thread_id)
+        .where(Thread.agent_id == agent.id)
+        .where(Thread.user_id == current_user.id)
+    )
+    db_thread = await session.exec(statement)
+    db_thread = db_thread.first()
+    if not db_thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
 
     redis_client = Redis.from_url(settings.REDIS_URL)
 
@@ -168,7 +180,12 @@ async def read_thread(
 
     agent = request.app.state.read_agent
     config = {"configurable": {"thread_id": thread_id}}
-    messages = (await agent.aget_state(config)).values["messages"]
+    try:
+        messages = (await agent.aget_state(config)).values["messages"]
+    except Exception as e:
+        print(f"No messages found for {thread_id}: {e}")
+        messages = []
+
     output_messages = []
     for message in messages:
         if message.type == "human":
@@ -208,7 +225,7 @@ async def update_thread(
 
 @router.delete("/{thread_id}")
 async def delete_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str
+    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str, request: Request
 ) -> Message:
     """
     Delete a thread by ID.
@@ -225,6 +242,10 @@ async def delete_thread(
         raise HTTPException(status_code=404, detail="Thread not found")
     await session.delete(db_thread)
     await session.commit()
+
+    checkpointer = AsyncPostgresSaver(request.app.state.connection_pool)
+    await checkpointer.adelete_thread(thread_id)
+
     return Message(message="Thread deleted successfully")
     ##ALSO DELETE ALL CHECKPOINTS (MESSAGE HISTORY) FOR THIS THREAD
     ##this must also trigger when the agent is deleted

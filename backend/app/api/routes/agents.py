@@ -1,7 +1,8 @@
+import stat
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from sqlalchemy import update
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, func, select
@@ -14,7 +15,11 @@ from app.models import (
     AgentsPublic,
     AgentUpdate,
     Message,
+    Thread,
 )
+
+from .utils import delete_langgraph_threads, delete_agent_store
+
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -135,7 +140,7 @@ async def update_agent(
 
 @router.delete("/{agent_id}")
 async def delete_agent(
-    session: SessionDep, current_user: CurrentUser, agent_id: str
+    session: SessionDep, current_user: CurrentUser, agent_id: str, background_tasks: BackgroundTasks, request: Request
 ) -> Message:
     """
     Delete an agent.
@@ -146,6 +151,15 @@ async def delete_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     if not current_user.is_superuser and (agent.owner_id != current_user.id):
         raise HTTPException(status_code=403, detail="Not enough permissions")
+    if not current_user.is_superuser and agent.is_public:
+        raise HTTPException(status_code=403, detail="Cannot unpublish a public agent manually. Contact support.")
+
+    statement = select(Thread.id).where(col(Thread.agent_id) == agent.id)
+    result = await session.exec(statement)
+    thread_ids = result.all()
+
+    background_tasks.add_task(delete_langgraph_threads, list(thread_ids), request.app.state.connection_pool)
+    background_tasks.add_task(delete_agent_store, [agent.id], request.app.state.connection_pool)
     await session.delete(agent)
     await session.commit()
     return Message(message="Agent deleted successfully")
