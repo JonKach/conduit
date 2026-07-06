@@ -1,14 +1,13 @@
 from pyexpat.errors import messages
-from turtle import st
 import shortuuid
 import uuid
 from datetime import datetime, timezone
 
 from pydantic import EmailStr
 from sqlalchemy import DateTime
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel, Column, JSON
 from sqlalchemy.orm import Mapped
+from typing import Literal
 
 
 def get_datetime_utc() -> datetime:
@@ -173,6 +172,8 @@ class ThreadContentPublic(ThreadPublic):
 class ChatRequest(SQLModel):
     message: str
     model: str
+    attached_files: list[str]
+    file_read_mode: Literal["base64", "reference"] = "reference"
 
 # Generic message
 class Message(SQLModel):

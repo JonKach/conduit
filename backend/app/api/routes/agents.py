@@ -2,12 +2,12 @@ import stat
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
 from sqlalchemy import update
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, func, select
 
-from app.api.deps import AllowedAgent, CurrentUser, SessionDep
+from app.api.deps import AllowedAgent, CurrentUser, SessionDep, reusable_oauth2
 from app.models import (
     Agent,
     AgentCreate,
@@ -21,7 +21,7 @@ from app.models import (
 from .utils import delete_langgraph_threads, delete_agent_store
 
 
-router = APIRouter(prefix="/agents", tags=["agents"])
+router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(reusable_oauth2)])
 
 
 @router.get("/me", response_model=AgentsPublic)

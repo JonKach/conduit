@@ -41,7 +41,7 @@ def health_check() -> bool:
 
 async def delete_langgraph_threads(thread_ids: list[str], connection_pool) -> None:
     """
-    Delete all thread checkpoints for a list of agent IDs.
+    Delete all thread checkpoints for a list of thread IDs.
     """
 
     if not thread_ids:

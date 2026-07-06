@@ -12,6 +12,8 @@ from psycopg import AsyncConnection
 from typing import Literal, Any, cast
 from deepagents import create_deep_agent
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from google.cloud import storage
+import json
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
@@ -30,11 +32,16 @@ async def lifespan(app: FastAPI):
     typed_postgres_pool = cast(AsyncConnectionPool[AsyncConnection[dict[str, Any]]], connection_pool)
     await typed_postgres_pool.open()
     app.state.connection_pool = typed_postgres_pool
+
     checkpointer = AsyncPostgresSaver(typed_postgres_pool)
     app.state.read_agent = create_deep_agent(
         model="google_genai:gemini-3.1-flash-lite",   # constructed, never invoked
         checkpointer=checkpointer,
     )
+
+    client = storage.Client.from_service_account_info(json.loads(settings.GOOGLE_APPLICATION_CREDENTIALS_JSON))
+    app.state.gcs_bucket = client.bucket(settings.GCS_BUCKET_NAME)
+
     yield
     await typed_postgres_pool.close()
 

@@ -14,7 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core import security
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
-from app.models import Agent, TokenPayload, User
+from app.models import Agent, TokenPayload, User, Thread
 from sqlalchemy.orm import selectinload
 
 # This checks for the presence of the Authorization header and extracts the token from it. The tokenUrl parameter is just used by FastAPI to generate the correct URL for the login endpoint in the OpenAPI documentation.
@@ -30,7 +30,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
-
 
 async def get_current_user(session: SessionDep, token: TokenDep) -> User:
     try:
@@ -77,3 +76,18 @@ async def get_agent(session: SessionDep, current_user: CurrentUser, agent_id: st
     return agent
 
 AllowedAgent = Annotated[Agent, Depends(get_agent)]
+
+async def get_thread(session: SessionDep, current_user: CurrentUser, agent: AllowedAgent, thread_id: str):
+    statement = (
+        select(Thread)
+        .where(Thread.id == thread_id)
+    )
+    db_thread = await session.exec(statement)
+    db_thread = db_thread.first()
+    if not db_thread or db_thread.agent_id != agent.id:
+        raise HTTPException(status_code=404, detail="Thread not found under this agent")
+    if not current_user.is_superuser and (db_thread.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    return db_thread
+
+AllowedThread = Annotated[Thread, Depends(get_thread)]

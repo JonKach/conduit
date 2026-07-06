@@ -1,32 +1,38 @@
-import traceback
-from alembic.op import f
-from anyio import run
-from langchain_core.load import load
-from sqlalchemy.sql.functions import user
 import asyncio
 import datetime
 import json
-from typing import Literal, Any, cast
+import traceback
+from typing import Any, Literal, cast
 
+from alembic.op import f
+from anyio import run
 from deepagents import create_deep_agent
+from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from dotenv import load_dotenv
+from google.cloud import storage
+from langchain_core.load import load
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres.aio import AsyncPostgresStore
-from psycopg.rows import dict_row
 from psycopg import AsyncConnection
+from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 from redis.asyncio import ConnectionPool, Redis
-from redis.exceptions import TimeoutError, ConnectionError
+from redis.exceptions import ConnectionError, TimeoutError
+from sqlalchemy.sql.functions import user
 from tavily import TavilyClient
 
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
-
-from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
-from langchain_core.runnables import RunnableConfig
-from dotenv import load_dotenv
+from app.gcs_backend import GCSBackend, build_user_message
 
 load_dotenv()
+
+client = storage.Client.from_service_account_info(json.loads(settings.GOOGLE_APPLICATION_CREDENTIALS_JSON))
+bucket = client.bucket(settings.GCS_BUCKET_NAME)
+
+gcs_backend = GCSBackend(bucket, root_prefix="agent-files")
 
 MAX_CONCURRENT_JOBS = 20
 tavily_client = TavilyClient(api_key=settings.TAVILY_API_KEY)
@@ -46,6 +52,8 @@ class AgentJob(BaseModel):
     message: str
     model: str
     user_id: str
+    attached_files: list[str]
+    file_read_mode: str = "reference"
 
 ## TOOLS
 
@@ -84,19 +92,26 @@ async def execute_agent(redis_client, checkpointer, store, job):
 
         corrected_system_prompt = f"System Prompt: {job.system_prompt}\n\nYou are a helpful assistant. Please follow the system prompt instructions carefully. Also, ensure that you use the tools provided to you when necessary. If a tool is not available, respond accordingly. Store all user preferences and important information in /memories/MEMORY.md for future reference. Skill files are located in /skills/ and can be used to enhance your capabilities. Remember to always check the system prompt for specific instructions."
 
+        user_turn = build_user_message(
+            bucket, job.thread_id, job.message,
+            attached_agent_paths=job.attached_files,   # [] on follow-ups -> text only
+            mode=job.file_read_mode,             # persisted-safe: survives replay, never expires
+        )
+
         agent = create_deep_agent(
             model=job.model,
             system_prompt=corrected_system_prompt,
             tools=agent_tools,
             checkpointer=checkpointer,
-            store=store,
+            store=store, 
             memory=["/memories/MEMORY.md"],
             skills=["/skills/"],
             backend=CompositeBackend(
                 default=StateBackend(), # Per-thread state
                 routes={
                     "/memories/": StoreBackend(namespace=lambda rt: (job.id, job.user_id)),
-                    "/skills/": StoreBackend(namespace=lambda rt: (job.id)),
+                    "/skills/": StoreBackend(namespace=lambda rt: (job.id,)),
+                    "/media/": gcs_backend  # Use GCS backend for media files (this strips the /media/ prefix and passes the rest to the GCS backend)
                 },
             )
         )
@@ -105,10 +120,11 @@ async def execute_agent(redis_client, checkpointer, store, job):
             "configurable": {"thread_id": job.thread_id}
         }
         stream = await agent.astream_events(
-            input={"messages": [{"role": "user", "content": job.message}]},
+            input={"messages": [user_turn]},
             config=config,
             version="v3"
         )
+
         print(f"-------- Agent execution started for job {job.id} -----\n")
         async for message in stream.messages:
             async for delta in message.text:

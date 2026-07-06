@@ -7,13 +7,13 @@ import uuid
 from typing import Any
 
 from alembic.util import msg
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, UploadFile, Header, Depends
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy.testing.config import db
 from sqlmodel import col, func, select
 
-from app.api.deps import AllowedAgent, CurrentUser, SessionDep
+from app.api.deps import AllowedAgent, AllowedThread, CurrentUser, SessionDep, reusable_oauth2
 from app.core.config import settings
 from app.models import (
     Agent,
@@ -28,9 +28,10 @@ from app.models import (
 )
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.runnables import RunnableConfig
+from app.gcs_backend import GCSBackend
 
 
-router = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"])
+router = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2)])
 
 @router.post("/", response_model=ThreadPublic, status_code=201)
 async def create_thread(
@@ -68,41 +69,16 @@ async def redis_sse_generator(thread_id: str, last_id: str = '0'):
 
                     if payload.get("type") in ["done", "error"]:
                         return
-
-            # if message:
-            #     print(f"Received message from Redis for stream {stream_id}: {message}")
-            #     msg_str = message["data"] #this "data" field is from the redis pubsub message, not to be confused with the "data" field in the SSE payload we send to the client
-            #     payload = json.loads(msg_str)
-
-            #     # SSE format
-            #     yield f"data: {msg_str}\n\n"
-
-            #     if payload.get("type") in ["done", "error"]:
-            #         break
-            # else:
-            #     await asyncio.sleep(0.1)  # Sleep briefly to avoid busy waiting
     finally:
         await redis_client.close()
 
 @router.post("/{thread_id}/stream")
 async def stream_thread_conversation(
-    agent: AllowedAgent, current_user: CurrentUser, thread_id: str, request: ChatRequest, session: SessionDep
+    agent: AllowedAgent, current_user: CurrentUser, thread: AllowedThread, request: ChatRequest, session: SessionDep
 ) -> Any:
     """
     Send a message and stream the resulting conversation for a given thread.
     """
-
-    #TODO: Add validation to ensure the thread belongs to the agent and user, and that the thread exists.
-    statement = (
-        select(Thread)
-        .where(Thread.id == thread_id)
-        .where(Thread.agent_id == agent.id)
-        .where(Thread.user_id == current_user.id)
-    )
-    db_thread = await session.exec(statement)
-    db_thread = db_thread.first()
-    if not db_thread:
-        raise HTTPException(status_code=404, detail="Thread not found")
 
     redis_client = Redis.from_url(settings.REDIS_URL)
 
@@ -110,13 +86,15 @@ async def stream_thread_conversation(
 
     job_payload = {
         **agent.model_dump(mode="json"),
-        "thread_id": thread_id,
+        "thread_id": thread.id,
         "user_id": str(current_user.id),
         "message": request.message,
-        "model": request.model
+        "model": request.model,
+        "attached_files": request.attached_files,
+        "file_read_mode": request.file_read_mode #reference or base64, default to reference
     }
     try:
-        stream_info = await redis_client.xinfo_stream(thread_id)
+        stream_info = await redis_client.xinfo_stream(thread.id)
     except Exception as e:
         stream_info = None
     last_id = stream_info['last-generated-id'] if stream_info else '0'
@@ -125,14 +103,33 @@ async def stream_thread_conversation(
     await redis_client.close()
 
     return StreamingResponse(
-        redis_sse_generator(thread_id, last_id),
+        redis_sse_generator(thread.id, last_id),
         media_type="text/event-stream"
     )
 
 
+@router.post("/{thread_id}/files")
+async def upload(thread: AllowedThread, file: UploadFile, request: Request) -> Any:
+    """Stage a user file for a thread. Returns the path the client should send
+    back with its next chat message as a newly-attached file."""
+    #TODO: Add a check to ensure the file is not too large
+    raw = await file.read()
+    scoped = GCSBackend(request.app.state.gcs_bucket, root_prefix="agent-files", thread_id=thread.id)
+    path = scoped.put_upload(f"/{file.filename}", raw, content_type=file.content_type)
+    return {"path": path}   # e.g. "/invoice.pdf"
+
+@router.get("/{thread_id}/files")
+async def list_files(thread: AllowedThread, request: Request) -> Any:
+    """List all files staged for a thread."""
+    scoped = GCSBackend(request.app.state.gcs_bucket, root_prefix="agent-files", thread_id=thread.id)
+    ls_result = scoped.ls("/")
+    if not ls_result.entries:
+        return {"files": []}
+    return {"files": [entry["path"] for entry in ls_result.entries]}  # e.g. ["/invoice.pdf", "/image.png"]
+
 @router.get("/", response_model=ThreadsPublic)
 async def read_threads(
-    session: SessionDep, current_user: CurrentUser, agent_id: str, skip: int = 0, limit: int = 100
+    session: SessionDep, current_user: CurrentUser, agent: AllowedAgent, skip: int = 0, limit: int = 100
 ) -> Any:
     """
     Retrieve threads for an agent.
@@ -140,7 +137,7 @@ async def read_threads(
     count_statement = (
         select(func.count())
         .select_from(Thread)
-        .where(Thread.agent_id == agent_id)
+        .where(Thread.agent_id == agent.id)
         .where(Thread.user_id == current_user.id)
     )
     count = await session.exec(count_statement)
@@ -148,7 +145,7 @@ async def read_threads(
 
     statement = (
         select(Thread)
-        .where(Thread.agent_id == agent_id)
+        .where(Thread.agent_id == agent.id)
         .where(Thread.user_id == current_user.id)
         .order_by(col(Thread.last_modified).desc())
         .offset(skip)
@@ -162,28 +159,17 @@ async def read_threads(
 
 @router.get("/{thread_id}", response_model=ThreadContentPublic)
 async def read_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str, request: Request
+    thread: AllowedThread, request: Request
 ) -> Any:
     """
     Retrieve a thread by ID.
     """
-    statement = (
-        select(Thread)
-        .where(Thread.id == thread_id)
-        .where(Thread.agent_id == agent_id)
-        .where(Thread.user_id == current_user.id)
-    )
-    db_thread = await session.exec(statement)
-    db_thread = db_thread.first()
-    if not db_thread:
-        raise HTTPException(status_code=404, detail="Thread not found")
-
     agent = request.app.state.read_agent
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread.id}}
     try:
         messages = (await agent.aget_state(config)).values["messages"]
     except Exception as e:
-        print(f"No messages found for {thread_id}: {e}")
+        print(f"No messages found for {thread.id}: {e}")
         messages = []
 
     output_messages = []
@@ -197,54 +183,46 @@ async def read_thread(
         else:
             output_messages.append({"type": "unknown", "content": message.content})
 
-    return ThreadContentPublic.model_validate(db_thread, update={"messages": output_messages})
+    return ThreadContentPublic.model_validate(thread.id, update={"messages": output_messages})
 
 @router.patch("/{thread_id}", response_model=ThreadPublic)
 async def update_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str, thread_update: ThreadUpdate
+    session: SessionDep, thread: AllowedThread, thread_update: ThreadUpdate
 ) -> Any:
     """
     Update a thread by ID.
     """
-    statement = (
-        select(Thread)
-        .where(Thread.id == thread_id)
-        .where(Thread.agent_id == agent_id)
-        .where(Thread.user_id == current_user.id)
-    )
-    db_thread = await session.exec(statement)
-    db_thread = db_thread.first()
-    if not db_thread:
-        raise HTTPException(status_code=404, detail="Thread not found")
     thread_data = thread_update.model_dump(exclude_unset=True)
-    db_thread.sqlmodel_update(thread_data)
-    session.add(db_thread)
+    thread.sqlmodel_update(thread_data)
+    session.add(thread)
     await session.commit()
-    await session.refresh(db_thread)
-    return ThreadPublic.model_validate(db_thread)
+    await session.refresh(thread)
+    return ThreadPublic.model_validate(thread)
+
+@router.delete("/{thread_id}/files/{file_path}")
+async def delete_file(thread: AllowedThread, file_path: str, request: Request) -> Message:
+    """Delete a file from a thread's media store."""
+    bucket = request.app.state.gcs_bucket
+    blob = bucket.blob(f"agent-files/{thread.id}/{file_path}")
+    if not blob.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    blob.delete()
+    return Message(message="File deleted successfully.")
 
 @router.delete("/{thread_id}")
 async def delete_thread(
-    session: SessionDep, current_user: CurrentUser, agent_id: str, thread_id: str, request: Request
+    session: SessionDep, thread: AllowedThread, request: Request
 ) -> Message:
     """
     Delete a thread by ID.
     """
-    statement = (
-        select(Thread)
-        .where(Thread.id == thread_id)
-        .where(Thread.agent_id == agent_id)
-        .where(Thread.user_id == current_user.id)
-    )
-    db_thread = await session.exec(statement)
-    db_thread = db_thread.first()
-    if not db_thread:
-        raise HTTPException(status_code=404, detail="Thread not found")
-    await session.delete(db_thread)
+    await session.delete(thread)
     await session.commit()
 
     checkpointer = AsyncPostgresSaver(request.app.state.connection_pool)
-    await checkpointer.adelete_thread(thread_id)
+    await checkpointer.adelete_thread(thread.id)
+
+    #TODO: Delete media files associated with this thread from the store if any exist
 
     return Message(message="Thread deleted successfully")
     ##ALSO DELETE ALL CHECKPOINTS (MESSAGE HISTORY) FOR THIS THREAD
