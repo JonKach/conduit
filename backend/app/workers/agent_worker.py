@@ -30,6 +30,7 @@ from app.core.db import AsyncSessionLocal
 from app.gcs_backend import GCSBackend, build_user_message
 
 from gcloud.aio.storage import Storage
+from langgraph.types import Command
 
 load_dotenv()
 
@@ -87,6 +88,7 @@ async def execute_agent(redis_client, checkpointer, store, gcs_storage, job):
         }
         await redis_client.xadd(job.thread_id, payload)
         await redis_client.expire(job.thread_id, 3600)
+        await redis_client.set(f"thread_status:{job.thread_id}", "RUNNING")
 
         agent_tools = []
         for tool_name in job.tools_config:
@@ -125,58 +127,85 @@ async def execute_agent(redis_client, checkpointer, store, gcs_storage, job):
         config: RunnableConfig = {
             "configurable": {"thread_id": job.thread_id}
         }
-        stream = await agent.astream_events(
-            input={"messages": [user_turn]},
-            config=config,
-            version="v3"
-        )
+        next_input = {"messages": [user_turn]}
 
-        # print(f"-------- Agent execution started for job {job.id} -----\n")
-        async for message in stream.messages:
-            async for delta in message.text:
-                # print(delta, end="", flush=True)
+        async def consume_messages():
+            async for message in stream.messages:
+                async for delta in message.text:
+                    payload = {
+                        "type": "data",
+                        "data": delta
+                    }
+                    await redis_client.xadd(job.thread_id, payload)
+                    await redis_client.expire(job.thread_id, 3600)
+                async for delta in message.reasoning:
+                    payload = {
+                        "type": "reasoning",
+                        "data": delta
+                    }
+                    await redis_client.xadd(job.thread_id, payload)
+                    await redis_client.expire(job.thread_id, 3600)
+
+        async def consume_tool_calls():
+            async for call in stream.tool_calls:
                 payload = {
-                    "type": "data",
-                    "data": delta
+                    "type": "tool_call",
+                    "data": json.dumps({
+                        "tool_name": call.tool_name,
+                        "tool_input": call.input,
+                    })
                 }
                 await redis_client.xadd(job.thread_id, payload)
                 await redis_client.expire(job.thread_id, 3600)
 
-            # print(f"\n-------- Final message output for job {job.id} -----\n")
-            full_message = await message.output
-            usage = full_message.usage_metadata
-            print(full_message)
-            if usage:
-                print(f"\n\nUsage for job {job.id}: {usage}")
+        while True:
+            stream = await agent.astream_events(
+                input=next_input,
+                config=config,
+                version="v3",
+                interrupt_after="*"
+            )
 
-            payload = {
-                "type": "finalized",
-                "data": json.dumps({ #this is now a string, decode on frontend
-                    "message": str(full_message.content),
-                    "usage": str(usage),
-                }),
-            }
-            await redis_client.xadd(job.thread_id, payload)
-            await redis_client.expire(job.thread_id, 3600)
+            await asyncio.gather(
+                consume_messages(),
+                consume_tool_calls(),
+            )
 
-        payload = {
-            "type": "done",
-            "data": json.dumps({ #this is now a string, decode on frontend
-                "message": "stream closed"
-            }),
-        }
-        await redis_client.xadd(job.thread_id, payload)
-        await redis_client.expire(job.thread_id, 3600)
+            state = await agent.aget_state(config)
+            if not state.next:  # or other termination check
+                full_message = state.values.get("messages", [])
+                for message in reversed(full_message):
+                    if message.type == "ai" and hasattr(message, "usage_metadata"):
+                        metadata = message.usage_metadata
+                        payload = {
+                            "type": "done",
+                            "data": json.dumps({
+                                "message": str(message.content),
+                                "input_tokens": str(metadata.get("input_tokens", 0) if metadata else 0),
+                                "output_tokens": str(metadata.get("output_tokens", 0) if metadata else 0),
+                                "total_tokens": str(metadata.get("total_tokens", 0) if metadata else 0),
+                            }),
+                        }
+                        await redis_client.xadd(job.thread_id, payload)
+                        await redis_client.expire(job.thread_id, 3600)
+                break
 
-        await asyncio.sleep(0.1)  # Ensure all messages are processed before fetching the final state
-        state_tuple = await agent.aget_state(config)
-        messages = state_tuple.values["messages"]
-        print("\nSaved Messages:", messages)
+            # If user pressed stop while we were in this step, exit
+            if (await redis_client.get(f"thread_status:{job.thread_id}")) == "STOP":
+                payload = {
+                    "type": "done",
+                    "data": json.dumps({
+                        "message": "Execution stopped by user."
+                    })
+                }
+                await redis_client.xadd(job.thread_id, payload)
+                await redis_client.expire(job.thread_id, 3600)
+                await redis_client.delete(f"thread_status:{job.thread_id}")
+                break
 
-        print(f"\n----------Entire stream state for thread {job.thread_id}----------\n")
-        final_output = await stream.output()
-        print("\n")
-        print(f"\nFinal output for job {job.id}: {final_output}")
+            # Otherwise, resume from the interrupt at the next node
+            next_input = Command(resume=True)
+
     except Exception as e:
         traceback.print_exc()
         error_payload = {
@@ -185,6 +214,66 @@ async def execute_agent(redis_client, checkpointer, store, gcs_storage, job):
         }
         await redis_client.xadd(job.thread_id, error_payload)
         await redis_client.expire(job.thread_id, 3600)
+
+
+
+
+# OLD -----------------------------------------------------------------------
+
+    #     # print(f"-------- Agent execution started for job {job.id} -----\n")
+    #     async for message in stream.messages:
+    #         async for delta in message.text:
+    #             # print(delta, end="", flush=True)
+    #             payload = {
+    #                 "type": "data",
+    #                 "data": delta
+    #             }
+    #             await redis_client.xadd(job.thread_id, payload)
+    #             await redis_client.expire(job.thread_id, 3600)
+
+    #         # print(f"\n-------- Final message output for job {job.id} -----\n")
+    #         full_message = await message.output
+    #         usage = full_message.usage_metadata
+    #         print(full_message)
+    #         if usage:
+    #             print(f"\n\nUsage for job {job.id}: {usage}")
+
+    #         payload = {
+    #             "type": "finalized",
+    #             "data": json.dumps({ #this is now a string, decode on frontend
+    #                 "message": str(full_message.content),
+    #                 "usage": str(usage),
+    #             }),
+    #         }
+    #         await redis_client.xadd(job.thread_id, payload)
+    #         await redis_client.expire(job.thread_id, 3600)
+
+    #     payload = {
+    #         "type": "done",
+    #         "data": json.dumps({ #this is now a string, decode on frontend
+    #             "message": "stream closed"
+    #         }),
+    #     }
+    #     await redis_client.xadd(job.thread_id, payload)
+    #     await redis_client.expire(job.thread_id, 3600)
+
+    #     await asyncio.sleep(0.1)  # Ensure all messages are processed before fetching the final state
+    #     state_tuple = await agent.aget_state(config)
+    #     messages = state_tuple.values["messages"]
+    #     print("\nSaved Messages:", messages)
+
+    #     print(f"\n----------Entire stream state for thread {job.thread_id}----------\n")
+    #     final_output = await stream.output()
+    #     print("\n")
+    #     print(f"\nFinal output for job {job.id}: {final_output}")
+    # except Exception as e:
+    #     traceback.print_exc()
+    #     error_payload = {
+    #         "type": "error",
+    #         "data": str(e)
+    #     }
+    #     await redis_client.xadd(job.thread_id, error_payload)
+    #     await redis_client.expire(job.thread_id, 3600)
 
 async def run_agent_and_cleanup(redis_client, checkpointer, store, gcs_storage, job, lock, semaphore):
     try:

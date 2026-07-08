@@ -1,3 +1,4 @@
+import redis
 import aiohttp
 from alembic.command import check
 from app.api.routes.utils import delete_langgraph_threads
@@ -112,6 +113,24 @@ async def stream_thread_conversation(
         media_type="text/event-stream"
     )
 
+@router.post("/{thread_id}/stop_stream")
+async def stop_stream_thread_conversation(
+    thread: AllowedThread, current_user: CurrentUser
+) -> Any:
+    """
+    Stop streaming a conversation for a given thread.
+    """
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+    curr_thread_state = await redis_client.get(f"thread_status:{thread.id}")
+    print("curr_thread_state", curr_thread_state)
+    if curr_thread_state != "RUNNING":
+        await redis_client.close()
+        raise HTTPException(status_code=400, detail="Thread is not currently running.")
+
+    await redis_client.set(f"thread_status:{thread.id}", "STOP")
+    await redis_client.close()
+    return Message(message="Stream stopped successfully.")
 
 @router.post("/{thread_id}/files")
 async def upload(thread: AllowedThread, file: UploadFile, request: Request) -> Any:
