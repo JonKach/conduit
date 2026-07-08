@@ -1,5 +1,6 @@
-from typing import Iterator
+from lxml.html.builder import B
 from _asyncio import Future
+from app.core.config import settings
 from fastapi_cloud_cli.commands.env import delete
 import asyncio
 from fastapi import APIRouter, Depends
@@ -12,6 +13,7 @@ from app.api.deps import get_current_active_superuser
 from app.core.db import AsyncSessionLocal
 from app.models import Agent, Message, Thread
 from app.utils import generate_test_email, send_email
+from gcloud.aio.storage import Storage, Bucket, Blob
 
 router = APIRouter(prefix="/utils", tags=["utils"])
 
@@ -39,36 +41,71 @@ def health_check() -> bool:
     return True
 
 
-async def delete_langgraph_threads(thread_ids: list[str], connection_pool) -> None:
+async def delete_langgraph_threads(
+    thread_ids: list[str], 
+    connection_pool, 
+    gcs_storage,
+    bucket_name: str
+) -> None:
     """
-    Delete all thread checkpoints for a list of thread IDs.
+    Delete all thread checkpoints for a list of thread IDs and cleanup GCS files.
     """
-
     if not thread_ids:
         return
 
     checkpointer = AsyncPostgresSaver(connection_pool)
 
-    tasks = [
-        checkpointer.adelete_thread(thread_id)
-        for thread_id in thread_ids
-    ]
+    thread_sem = asyncio.Semaphore(20)
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    async def delete_thread_files(thread_id: str):
+        async with thread_sem:
+            try:
+                await checkpointer.adelete_thread(thread_id)
+            except Exception as e:
+                print(f"Failed to delete thread {thread_id}: {e}")
 
-    for thread_id, result in zip(thread_ids, results, strict=True):
+    await asyncio.gather(*(delete_thread_files(tid) for tid in thread_ids), return_exceptions=True)
+
+    bucket = Bucket(gcs_storage, bucket_name)
+
+    gcs_search_tasks = [bucket.list_blobs(prefix=f"agent-files/{tid}/") for tid in thread_ids]
+
+    search_results = await asyncio.gather(*gcs_search_tasks, return_exceptions=True)
+
+    blob_sem = asyncio.Semaphore(20)
+
+    async def _safe_delete_blob(blob_name: str, thread_id: str):
+        async with blob_sem:
+            try:
+                await gcs_storage.delete(bucket_name, blob_name)
+            except Exception as e:
+                print(f"Failed to delete blob {blob_name} for thread {thread_id}: {e}")
+
+    delete_file_tasks = []
+
+    for thread_id, result in zip(thread_ids, search_results, strict=True):
         if isinstance(result, Exception):
-            print(f"Failed to delete thread {thread_id}: {result}")
+            print(f"Failed to fetch documents for thread {thread_id}: {result}")
+            continue
+
+        for item in result:
+            delete_file_tasks.append(_safe_delete_blob(item, thread_id))
+
+    if delete_file_tasks:
+        await asyncio.gather(*delete_file_tasks, return_exceptions=True)
 
 async def search_and_delete(search_tasks, store: AsyncPostgresStore, resources: list) -> None:
 
     search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
+    sem = asyncio.Semaphore(20)
+
     async def _safe_delete(namespace, key):
-        try:
-            await store.adelete(namespace, key)
-        except Exception as e:
-            print(f"Failed to delete ({namespace}, {key}): {e}")
+        async with sem:
+            try:
+                await store.adelete(namespace, key)
+            except Exception as e:
+                print(f"Failed to delete ({namespace}, {key}): {e}")
 
     delete_tasks = []
     for resource, result in zip(resources, search_results, strict=True):

@@ -108,6 +108,7 @@ class Agent(AgentBase, table=True):
         foreign_key="user.id", nullable=False, ondelete="CASCADE"
     )
     owner: Mapped[User] = Relationship(back_populates="agents")
+    skill_files: list[str] = Field(default=[], sa_column=Column(JSON))
 
 
 # Properties to return via API, id is always required
@@ -172,7 +173,7 @@ class ThreadContentPublic(ThreadPublic):
 class ChatRequest(SQLModel):
     message: str
     model: str
-    attached_files: list[str]
+    attached_files: list[str] = []
     file_read_mode: Literal["base64", "reference"] = "reference"
 
 # Generic message

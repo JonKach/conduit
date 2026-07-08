@@ -1,4 +1,8 @@
-"""A thread-scoped Google Cloud Storage backend for LangChain deep agents.
+"""An async, thread-scoped Google Cloud Storage backend for LangChain deep agents.
+
+This is the fully-async counterpart to the synchronous ``google-cloud-storage``
+backend. All I/O goes through ``gcloud-aio-storage`` (aiohttp under the hood),
+so nothing blocks the event loop.
 
 Key ideas
 ---------
@@ -12,19 +16,41 @@ Key ideas
    per-write as a thread with 1 file.
 
 2. Thread isolation is resolved AT CALL TIME from the LangGraph run config via
-   `get_config()["configurable"]["thread_id"]` (exactly how the built-in
+   ``get_config()["configurable"]["thread_id"]`` (exactly how the built-in
    StoreBackend resolves its namespace). One shared backend instance stays
-   correctly scoped across concurrent threads because `get_config()` reads a
-   context var that is unique per invocation.
+   correctly scoped across concurrent threads because ``get_config()`` reads a
+   context var that is unique per invocation. Context vars propagate across
+   ``await`` points, so this keeps working under async.
+
+3. Async surface. ``deepagents``' ``BackendProtocol`` exposes paired sync/async
+   methods (``ls``/``als``, ``read``/``aread``, ...). The async deep-agent path
+   awaits the ``a*`` variants, so THAT is what this backend implements with real
+   non-blocking I/O. The base class's default ``a*`` implementations just wrap
+   the sync methods in ``asyncio.to_thread`` — useless here, since our sync
+   methods can't do async I/O — so we override them and leave the sync methods
+   as clear "async-only" errors.
+
+Lifecycle
+---------
+The caller owns the ``Storage`` client and its aiohttp session. Create it once
+and reuse it::
+
+    async with Storage() as storage:
+        backend = GCSBackend(storage, "my-bucket")
+        await agent.ainvoke(..., config={"configurable": {"thread_id": "t1"}})
+
+(or manage it yourself and ``await storage.close()`` on shutdown).
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
-import binascii
 import mimetypes
-from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
+
+from aiohttp import ClientResponseError
+from gcloud.aio.storage import Bucket, Storage
 
 from langgraph.config import get_config
 
@@ -86,19 +112,32 @@ class GCSBackend(BackendProtocol):
     """Stores deep-agent files in a GCS bucket, namespaced per thread_id.
 
     Args:
-        bucket: an initialized ``google.cloud.storage.Bucket`` (or any object
-            exposing ``blob(name)`` and ``list_blobs(prefix=...)``).
+        storage: an initialized ``gcloud.aio.storage.Storage`` client. The
+            caller owns its lifecycle (aiohttp session). Reuse one instance
+            across threads/requests.
+        bucket: the GCS bucket NAME (a plain string). Unlike the sync backend,
+            gcloud-aio addresses objects by ``(bucket_name, object_name)`` on a
+            shared client rather than through a Bucket object.
         root_prefix: top-level prefix under which all threads live.
         thread_id: optional explicit override; if omitted, resolved per-call
             from the LangGraph run config.
     """
 
-    def __init__(self, bucket, root_prefix: str = "agent-files", thread_id: str | None = None):
-        self._bucket = bucket
+    # Only the async (`a*`) methods are implemented — every I/O path needs a
+    # running event loop, so the sync methods raise this instead.
+    _ASYNC_ONLY = (
+        "GCSBackend is async-only. Call the awaitable variant "
+        "(als/aread/awrite/aedit/agrep/aglob) and drive the deep agent through "
+        "its async entrypoints (ainvoke/astream)."
+    )
+
+    def __init__(self, storage: Storage, bucket: str, root_prefix: str = "agent-files", thread_id: str | None = None):
+        self._storage = storage
+        self._bucket_name = bucket
         self._root = root_prefix.strip("/")
         self._explicit_thread_id = thread_id
 
-    # ---- thread scoping -------------------------------------------------
+    # ---- thread scoping (pure string ops; safe to call from async) ------
     def _thread_id(self) -> str:
         if self._explicit_thread_id is not None:
             return self._explicit_thread_id
@@ -127,47 +166,70 @@ class GCSBackend(BackendProtocol):
         """Inverse of _key: strip the '{root}/{thread}/' prefix, return '/...'. """
         return "/" + key[len(self._prefix()):]
 
-    # ---- low-level IO ---------------------------------------------------
-    def _read_bytes(self, agent_path: str) -> bytes | None:
-        blob = self._bucket.blob(self._key(agent_path))
-        if not blob.exists():
-            return None
-        return blob.download_as_bytes()
+    # ---- low-level async IO ---------------------------------------------
+    async def _aread_bytes(self, agent_path: str) -> bytes | None:
+        try:
+            return await self._storage.download(self._bucket_name, self._key(agent_path))
+        except ClientResponseError as exc:
+            # gcloud-aio surfaces GCS errors as aiohttp ClientResponseError.
+            # A missing object is a 404 -> "not found", not an exception.
+            if exc.status == 404:
+                return None
+            raise
 
-    def _file_data(self, agent_path: str) -> FileData | None:
-        raw = self._read_bytes(agent_path)
+    async def _afile_data(self, agent_path: str) -> FileData | None:
+        raw = await self._aread_bytes(agent_path)
         if raw is None:
             return None
         if _looks_binary(agent_path, raw):
             return create_file_data(base64.b64encode(raw).decode("ascii"), encoding="base64")
         return create_file_data(raw.decode("utf-8"), encoding="utf-8")
 
-    def _write_bytes(self, agent_path: str, raw: bytes, content_type: str | None = None) -> None:
-        blob = self._bucket.blob(self._key(agent_path))
+    async def _awrite_bytes(self, agent_path: str, raw: bytes, content_type: str | None = None) -> None:
         # Derive image/jpeg, image/png, application/pdf, ... from the extension
         # so signed-URL fetches carry the right Content-Type header.
         ct = content_type or _guess_content_type(agent_path)
-        blob.upload_from_string(raw, content_type=ct)
+        await self._storage.upload(self._bucket_name, self._key(agent_path), raw, content_type=ct)
 
-    # ---- BackendProtocol surface ---------------------------------------
-    def ls(self, agent_path: str) -> LsResult:
+    async def _alist(self, prefix: str) -> list[dict]:
+        """Prefix-list all objects, transparently following pagination.
+
+        Returns the raw GCS JSON ``items`` dicts (``name``, string ``size``,
+        ISO-8601 ``updated``, ...).
+        """
+        items: list[dict] = []
+        page_token: str | None = None
+        while True:
+            params = {"prefix": prefix}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await self._storage.list_objects(self._bucket_name, params=params)
+            items.extend(resp.get("items", []))
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        return items
+
+    # ---- BackendProtocol async surface ----------------------------------
+    async def als(self, path: str) -> LsResult:
         prefix = self._prefix()
-        sub = agent_path.lstrip("/")
+        sub = path.lstrip("/")
         if sub:
             prefix = f"{prefix}{sub.rstrip('/')}/"
         entries: list[FileInfo] = []
-        for blob in self._bucket.list_blobs(prefix=prefix):
-            info: FileInfo = {"path": self._agent_path(blob.name)}
-            if getattr(blob, "size", None) is not None:
-                info["size"] = blob.size
-            updated = getattr(blob, "updated", None)
+        for item in await self._alist(prefix):
+            info: FileInfo = {"path": self._agent_path(item["name"])}
+            size = item.get("size")
+            if size is not None:
+                info["size"] = int(size)                 # GCS JSON returns size as a string
+            updated = item.get("updated")
             if updated is not None:
-                info["modified_at"] = updated.isoformat() if hasattr(updated, "isoformat") else str(updated)
+                info["modified_at"] = updated            # already ISO-8601
             entries.append(info)
         return LsResult(entries=entries)
 
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        fd = self._file_data(file_path)
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        fd = await self._afile_data(file_path)
         if fd is None:
             return ReadResult(error=f"File not found: {file_path}")
         sliced = slice_read_response(fd, offset, limit)
@@ -177,13 +239,13 @@ class GCSBackend(BackendProtocol):
         # so the middleware renders binary/text consistently.
         return ReadResult(file_data=fd)
 
-    def write(self, file_path: str, content: str) -> WriteResult:
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
         # `content` is always a str from the tool layer; persist as utf-8 bytes.
-        self._write_bytes(file_path, content.encode("utf-8"), content_type="text/plain; charset=utf-8")
+        await self._awrite_bytes(file_path, content.encode("utf-8"), content_type="text/plain; charset=utf-8")
         return WriteResult(path=file_path)
 
-    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
-        fd = self._file_data(file_path)
+    async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        fd = await self._afile_data(file_path)
         if fd is None:
             return EditResult(error=f"File not found: {file_path}")
         text = file_data_to_string(fd)
@@ -191,57 +253,90 @@ class GCSBackend(BackendProtocol):
         if isinstance(result, str):  # error message
             return EditResult(error=result)
         new_text, occurrences = result
-        self._write_bytes(file_path, new_text.encode("utf-8"), content_type="text/plain; charset=utf-8")
+        await self._awrite_bytes(file_path, new_text.encode("utf-8"), content_type="text/plain; charset=utf-8")
         return EditResult(path=file_path, occurrences=occurrences)
 
     # ---- optional: grep/glob via in-memory snapshot of the thread -------
-    def _snapshot(self) -> dict[str, FileData]:
-        files: dict[str, FileData] = {}
-        for blob in self._bucket.list_blobs(prefix=self._prefix()):
-            ap = self._agent_path(blob.name)
-            fd = self._file_data(ap)
-            if fd is not None:
-                files[ap] = fd
-        return files
+    async def _asnapshot(self) -> dict[str, FileData]:
+        # One list call, then fan out the downloads concurrently instead of
+        # walking them one at a time.
+        items = await self._alist(self._prefix())
+        paths = [self._agent_path(item["name"]) for item in items]
+        datas = await asyncio.gather(*(self._afile_data(p) for p in paths))
+        return {p: fd for p, fd in zip(paths, datas) if fd is not None}
 
-    def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
-        return grep_matches_from_files(self._snapshot(), pattern, path, glob)
+    async def agrep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
+        return grep_matches_from_files(await self._asnapshot(), pattern, path, glob)
 
-    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
-        matches = _glob_search_files(self._snapshot(), pattern, path)
+    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
+        matches = _glob_search_files(await self._asnapshot(), pattern, path)
         # helper returns a formatted string of paths; normalize to FileInfo list
         paths = [ln for ln in matches.splitlines() if ln.strip()] if isinstance(matches, str) else []
         return GlobResult(matches=[{"path": p} for p in paths])
 
-    # ---- developer-facing helper (not an agent tool) -------------------
-    def put_upload(self, agent_path: str, raw: bytes, content_type: str | None = None) -> str:
+    # ---- sync surface: unsupported (this backend is async-only) ---------
+    def ls(self, path: str) -> LsResult:
+        raise NotImplementedError(self._ASYNC_ONLY)
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        raise NotImplementedError(self._ASYNC_ONLY)
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        raise NotImplementedError(self._ASYNC_ONLY)
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        raise NotImplementedError(self._ASYNC_ONLY)
+
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
+        raise NotImplementedError(self._ASYNC_ONLY)
+
+    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        raise NotImplementedError(self._ASYNC_ONLY)
+
+    # ---- developer-facing helpers (not agent tools) --------------------
+    async def put_upload(self, agent_path: str, raw: bytes, content_type: str | None = None) -> str:
         """Call this from your upload endpoint to stage a user file for a thread.
 
         Returns the agent-visible path (e.g. '/uploads/cat.png').
         """
-        self._write_bytes(agent_path, raw, content_type=content_type)
+        await self._awrite_bytes(agent_path, raw, content_type=content_type)
         return agent_path
 
-    def generate_signed_url(self, agent_path: str, *, minutes: int = 15, method: str = "GET") -> str:
+    async def generate_signed_url(
+        self,
+        agent_path: str,
+        *,
+        minutes: int = 15,
+        method: str = "GET",
+        service_account_email: str | None = None,
+        token=None,
+        iam_client=None,
+    ) -> str:
         """Mint a short-lived URL the model's provider can fetch server-side.
+
+        Uses ``Bucket.new_blob`` which builds the Blob locally (no metadata
+        round-trip), so this doesn't require the object to already exist for the
+        signing math — only for the eventual fetch.
 
         Note for GCE / Cloud Run / GKE: the default compute service account has
         no private key, so v4 signing needs the IAM Credentials API. Either run
-        under a service-account JSON key, or pass `service_account_email=` plus
-        `access_token=` to `generate_signed_url` (requires the
-        `iam.serviceAccounts.signBlob` permission). With a JSON key the call
-        below works as-is.
+        under a service-account JSON key (passed to ``Storage(service_file=...)``),
+        or pass ``service_account_email=`` plus a ``token=`` / ``iam_client=``
+        here (requires the ``iam.serviceAccounts.signBlob`` permission). With a
+        JSON key the call below works as-is.
         """
-        blob = self._bucket.blob(self._key(agent_path))
-        return blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(minutes=minutes),
-            method=method,
+        blob = Bucket(self._storage, self._bucket_name).new_blob(self._key(agent_path))
+        return await blob.get_signed_url(
+            minutes * 60,                       # gcloud-aio expiration is in SECONDS
+            http_method=method,
+            service_account_email=service_account_email,
+            token=token,
+            iam_client=iam_client,
         )
 
 
 # ============================================================================
-# Message-time adapter
+# Message-time adapter (async)
 # ----------------------------------------------------------------------------
 # "Message-time blocks" = converting a thread's stored uploads into the content
 # blocks the model consumes AT INVOKE TIME, so it sees them on this turn —
@@ -267,25 +362,26 @@ def _resolve_types(types: tuple[str, ...] | None) -> tuple[str, ...]:
     return types
 
 
-def _block_for_path(scoped: "GCSBackend", agent_path: str, mode: str, minutes: int) -> dict | None:
+async def _block_for_path(scoped: "GCSBackend", agent_path: str, mode: str, minutes: int) -> dict | None:
     """Build one content block for a single file path, or None if not media."""
     ftype = _get_file_type(agent_path)                          # deepagents' own classifier
     if ftype == "text":
         return None
     mime = mimetypes.guess_type("file" + PurePosixPath(agent_path).suffix)[0] or "application/octet-stream"
     if mode == "url":
-        block: dict = {"type": ftype, "url": scoped.generate_signed_url(agent_path, minutes=minutes)}
+        block: dict = {"type": ftype, "url": await scoped.generate_signed_url(agent_path, minutes=minutes)}
         if ftype != "image":                              # non-image url blocks need explicit mime
             block["mime_type"] = mime
         return block
-    raw = scoped._read_bytes(agent_path)
+    raw = await scoped._aread_bytes(agent_path)
     if raw is None:
         return None
     return {"type": ftype, "base64": base64.b64encode(raw).decode("ascii"), "mime_type": mime}
 
 
-def media_blocks_for_paths(
-    bucket,
+async def media_blocks_for_paths(
+    storage: Storage,
+    bucket: str,
     thread_id: str,
     agent_paths: list[str],
     *,
@@ -302,21 +398,19 @@ def media_blocks_for_paths(
     `types` defaults to DEFAULT_INJECT_TYPES (images). Pass a subset of
     _MEDIA_TYPES to include audio/video/PDF "file" blocks for models that
     support them.
+
+    The per-path fetches (download or signed-URL mint) run concurrently.
     """
     allowed = _resolve_types(types)
-    scoped = GCSBackend(bucket, root_prefix=root_prefix, thread_id=thread_id)
-    blocks: list[dict] = []
-    for agent_path in agent_paths:
-        if _get_file_type(agent_path) not in allowed:
-            continue
-        block = _block_for_path(scoped, agent_path, mode, minutes)
-        if block is not None:
-            blocks.append(block)
-    return blocks
+    scoped = GCSBackend(storage, bucket, root_prefix=root_prefix, thread_id=thread_id)
+    candidates = [p for p in agent_paths if _get_file_type(p) in allowed]
+    blocks = await asyncio.gather(*(_block_for_path(scoped, p, mode, minutes) for p in candidates))
+    return [b for b in blocks if b is not None]
 
 
-def build_user_message(
-    bucket,
+async def build_user_message(
+    storage: Storage,
+    bucket: str,
     thread_id: str,
     text: str,
     attached_agent_paths: list[str] | None = None,
@@ -328,8 +422,9 @@ def build_user_message(
 ) -> dict:
     """Assemble a user turn, embedding ONLY files attached to THIS message.
 
-    - First turn (user just uploaded files): pass `attached_paths=[...]` -> the
-      message carries those media blocks so the model sees them immediately.
+    - First turn (user just uploaded files): pass `attached_agent_paths=[...]`
+      -> the message carries those media blocks so the model sees them
+      immediately.
     - Follow-up turn (no new uploads): pass nothing -> a plain text message.
       The files are still in GCS; if the agent needs to look again it calls
       `read_file`, which re-reads fresh bytes from GCS (so nothing expires and
@@ -347,16 +442,16 @@ def build_user_message(
     attached_agent_paths = attached_agent_paths or []
 
     if mode == "reference":
-        scoped = GCSBackend(bucket, root_prefix=root_prefix, thread_id=thread_id)
-        ls_result = scoped.ls("/")  # list all files for this thread
+        scoped = GCSBackend(storage, bucket, root_prefix=root_prefix, thread_id=thread_id)
+        ls_result = await scoped.als("/")  # list all files for this thread
         if ls_result.entries:
             text = text + "\n\nThe following files are available in the thread's media store (/media/). Use read_file to view them if relevant and not already loaded into context.\n" + "\n".join(
                 f"- /media{entry['path']}" for entry in ls_result.entries
             )
         return {"role": "user", "content": text}
 
-    blocks = media_blocks_for_paths(
-        bucket, thread_id, attached_agent_paths,
+    blocks = await media_blocks_for_paths(
+        storage, bucket, thread_id, attached_agent_paths,
         root_prefix=root_prefix, mode=mode, minutes=minutes, types=types,
     )
     if not blocks:

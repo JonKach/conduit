@@ -1,3 +1,4 @@
+import aiohttp
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
@@ -12,8 +13,9 @@ from psycopg import AsyncConnection
 from typing import Literal, Any, cast
 from deepagents import create_deep_agent
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from google.cloud import storage
+from gcloud.aio.storage import Storage
 import json
+import io
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
@@ -39,8 +41,9 @@ async def lifespan(app: FastAPI):
         checkpointer=checkpointer,
     )
 
-    client = storage.Client.from_service_account_info(json.loads(settings.GOOGLE_APPLICATION_CREDENTIALS_JSON))
-    app.state.gcs_bucket = client.bucket(settings.GCS_BUCKET_NAME)
+    session = aiohttp.ClientSession()
+    file_stream = io.StringIO(settings.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+    app.state.gcs_storage = Storage(service_file=file_stream, session=session)
 
     yield
     await typed_postgres_pool.close()

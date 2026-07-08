@@ -215,7 +215,9 @@ async def handle_user_deletion(user: User, session: SessionDep, background_tasks
         background_tasks.add_task(
             delete_langgraph_threads,
             list(thread_ids),
-            request.app.state.connection_pool
+            request.app.state.connection_pool,
+            request.app.state.gcs_storage,
+            settings.GCS_BUCKET_NAME
         )
 
     if private_agent_ids:
@@ -232,7 +234,7 @@ async def handle_user_deletion(user: User, session: SessionDep, background_tasks
     )
     await session.exec(transfer_statement)
 
-    await session.delete(user)
+    await session.delete(user) #cascade delete will handle deleting the user's agents and threads
     await session.commit()
 
 @router.delete("/me", response_model=Message)

@@ -1,4 +1,6 @@
+import aiohttp
 from alembic.command import check
+from app.api.routes.utils import delete_langgraph_threads
 import shortuuid
 import asyncio
 import json
@@ -7,11 +9,13 @@ import uuid
 from typing import Any
 
 from alembic.util import msg
-from fastapi import APIRouter, HTTPException, Request, UploadFile, Header, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, Header, Depends
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy.testing.config import db
 from sqlmodel import col, func, select
+
+from langgraph.store.postgres.aio import AsyncPostgresStore
 
 from app.api.deps import AllowedAgent, AllowedThread, CurrentUser, SessionDep, reusable_oauth2
 from app.core.config import settings
@@ -74,7 +78,7 @@ async def redis_sse_generator(thread_id: str, last_id: str = '0'):
 
 @router.post("/{thread_id}/stream")
 async def stream_thread_conversation(
-    agent: AllowedAgent, current_user: CurrentUser, thread: AllowedThread, request: ChatRequest, session: SessionDep
+    agent: AllowedAgent, current_user: CurrentUser, thread: AllowedThread, session: SessionDep, chat_request: ChatRequest, 
 ) -> Any:
     """
     Send a message and stream the resulting conversation for a given thread.
@@ -88,10 +92,11 @@ async def stream_thread_conversation(
         **agent.model_dump(mode="json"),
         "thread_id": thread.id,
         "user_id": str(current_user.id),
-        "message": request.message,
-        "model": request.model,
-        "attached_files": request.attached_files,
-        "file_read_mode": request.file_read_mode #reference or base64, default to reference
+        "message": chat_request.message,
+        "model": chat_request.model,
+        "attached_files": chat_request.attached_files,
+        "file_read_mode": chat_request.file_read_mode, #reference or base64, default to reference
+        "skill_files": agent.skill_files, #list of skill names
     }
     try:
         stream_info = await redis_client.xinfo_stream(thread.id)
@@ -114,15 +119,15 @@ async def upload(thread: AllowedThread, file: UploadFile, request: Request) -> A
     back with its next chat message as a newly-attached file."""
     #TODO: Add a check to ensure the file is not too large
     raw = await file.read()
-    scoped = GCSBackend(request.app.state.gcs_bucket, root_prefix="agent-files", thread_id=thread.id)
+    scoped = GCSBackend(request.app.state.gcs_storage, settings.GCS_BUCKET_NAME, root_prefix="agent-files", thread_id=thread.id)
     path = scoped.put_upload(f"/{file.filename}", raw, content_type=file.content_type)
     return {"path": path}   # e.g. "/invoice.pdf"
 
 @router.get("/{thread_id}/files")
 async def list_files(thread: AllowedThread, request: Request) -> Any:
     """List all files staged for a thread."""
-    scoped = GCSBackend(request.app.state.gcs_bucket, root_prefix="agent-files", thread_id=thread.id)
-    ls_result = scoped.ls("/")
+    scoped = GCSBackend(request.app.state.gcs_storage, settings.GCS_BUCKET_NAME, root_prefix="agent-files", thread_id=thread.id)
+    ls_result = await scoped.als("/")
     if not ls_result.entries:
         return {"files": []}
     return {"files": [entry["path"] for entry in ls_result.entries]}  # e.g. ["/invoice.pdf", "/image.png"]
@@ -183,7 +188,7 @@ async def read_thread(
         else:
             output_messages.append({"type": "unknown", "content": message.content})
 
-    return ThreadContentPublic.model_validate(thread.id, update={"messages": output_messages})
+    return ThreadContentPublic.model_validate(thread, update={"messages": output_messages})
 
 @router.patch("/{thread_id}", response_model=ThreadPublic)
 async def update_thread(
@@ -202,16 +207,19 @@ async def update_thread(
 @router.delete("/{thread_id}/files/{file_path}")
 async def delete_file(thread: AllowedThread, file_path: str, request: Request) -> Message:
     """Delete a file from a thread's media store."""
-    bucket = request.app.state.gcs_bucket
-    blob = bucket.blob(f"agent-files/{thread.id}/{file_path}")
-    if not blob.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    blob.delete()
+    storage = request.app.state.gcs_storage
+    try:
+        await storage.delete(settings.GCS_BUCKET_NAME, f"agent-files/{thread.id}/{file_path}")
+    except aiohttp.ClientResponseError as e:
+        if e.status == 404:
+            raise HTTPException(404, "File not found.")
+    except Exception as e:
+        raise HTTPException(500, "Unexpected Error")
     return Message(message="File deleted successfully.")
 
 @router.delete("/{thread_id}")
 async def delete_thread(
-    session: SessionDep, thread: AllowedThread, request: Request
+    session: SessionDep, thread: AllowedThread, request: Request, background_tasks: BackgroundTasks
 ) -> Message:
     """
     Delete a thread by ID.
@@ -219,10 +227,7 @@ async def delete_thread(
     await session.delete(thread)
     await session.commit()
 
-    checkpointer = AsyncPostgresSaver(request.app.state.connection_pool)
-    await checkpointer.adelete_thread(thread.id)
-
-    #TODO: Delete media files associated with this thread from the store if any exist
+    background_tasks.add_task(delete_langgraph_threads, [thread.id], request.app.state.connection_pool, request.app.state.gcs_storage, settings.GCS_BUCKET_NAME)
 
     return Message(message="Thread deleted successfully")
     ##ALSO DELETE ALL CHECKPOINTS (MESSAGE HISTORY) FOR THIS THREAD

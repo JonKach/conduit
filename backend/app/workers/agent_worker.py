@@ -3,7 +3,9 @@ import datetime
 import json
 import traceback
 from typing import Any, Literal, cast
+import io
 
+import aiohttp
 from alembic.op import f
 from anyio import run
 from deepagents import create_deep_agent
@@ -27,12 +29,9 @@ from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.gcs_backend import GCSBackend, build_user_message
 
+from gcloud.aio.storage import Storage
+
 load_dotenv()
-
-client = storage.Client.from_service_account_info(json.loads(settings.GOOGLE_APPLICATION_CREDENTIALS_JSON))
-bucket = client.bucket(settings.GCS_BUCKET_NAME)
-
-gcs_backend = GCSBackend(bucket, root_prefix="agent-files")
 
 MAX_CONCURRENT_JOBS = 20
 tavily_client = TavilyClient(api_key=settings.TAVILY_API_KEY)
@@ -54,10 +53,11 @@ class AgentJob(BaseModel):
     user_id: str
     attached_files: list[str]
     file_read_mode: str = "reference"
+    skill_files: list[str] = []
 
 ## TOOLS
 
-def web_search(
+async def web_search(
     query: str,
     max_results: int = 5,
     topic: Literal["general", "news", "finance"] = "general",
@@ -65,16 +65,20 @@ def web_search(
     include_llm_answer: bool = False
 ):
     """Run a web search"""
-    return tavily_client.search(
-        query=query,
-        max_results=max_results,
-        topic=topic,
-        include_raw_content=include_raw_content,
-        include_answer=include_llm_answer
+    return await asyncio.to_thread(
+        lambda: tavily_client.search(
+            query=query,
+            max_results=max_results,
+            topic=topic,
+            include_raw_content=include_raw_content,
+            include_answer=include_llm_answer
+        )
     )
 
-async def execute_agent(redis_client, checkpointer, store, job):
+async def execute_agent(redis_client, checkpointer, store, gcs_storage, job):
     job = AgentJob.model_validate(job)
+
+    gcs_backend = GCSBackend(gcs_storage, settings.GCS_BUCKET_NAME, thread_id=job.thread_id)
 
     try:
         payload = {
@@ -90,22 +94,24 @@ async def execute_agent(redis_client, checkpointer, store, job):
             if tool is not None:
                 agent_tools.append(tool)
 
-        corrected_system_prompt = f"System Prompt: {job.system_prompt}\n\nYou are a helpful assistant. Please follow the system prompt instructions carefully. Also, ensure that you use the tools provided to you when necessary. If a tool is not available, respond accordingly. Store all user preferences and important information in /memories/MEMORY.md for future reference. Skill files are located in /skills/ and can be used to enhance your capabilities. Remember to always check the system prompt for specific instructions."
+        corrected_system_prompt = f"System Prompt: {job.system_prompt}\n\nYou are a helpful assistant. Please follow the system prompt instructions carefully. Also, ensure that you use the tools provided to you when necessary. If a tool is not available, respond accordingly. Store all user preferences and important information in /memories/MEMORY.md for future reference. Skill files are located in /skills/ and can be used to enhance your capabilities. You MUST use skills and memories if they can be even at all relevant. Do not answer by yourself if there is a skill that could change your answer, even if you think you know it."
 
-        user_turn = build_user_message(
-            bucket, job.thread_id, job.message,
+        user_turn = await build_user_message(
+            gcs_storage, settings.GCS_BUCKET_NAME, job.thread_id, job.message,
             attached_agent_paths=job.attached_files,   # [] on follow-ups -> text only
             mode=job.file_read_mode,             # persisted-safe: survives replay, never expires
         )
+
+        print("Agent skills", ["/skills/" + skill_name for skill_name in job.skill_files])
 
         agent = create_deep_agent(
             model=job.model,
             system_prompt=corrected_system_prompt,
             tools=agent_tools,
             checkpointer=checkpointer,
-            store=store, 
+            store=store,
             memory=["/memories/MEMORY.md"],
-            skills=["/skills/"],
+            skills=["/skills/" + skill_name for skill_name in job.skill_files],
             backend=CompositeBackend(
                 default=StateBackend(), # Per-thread state
                 routes={
@@ -125,10 +131,10 @@ async def execute_agent(redis_client, checkpointer, store, job):
             version="v3"
         )
 
-        print(f"-------- Agent execution started for job {job.id} -----\n")
+        # print(f"-------- Agent execution started for job {job.id} -----\n")
         async for message in stream.messages:
             async for delta in message.text:
-                print(delta, end="", flush=True)
+                # print(delta, end="", flush=True)
                 payload = {
                     "type": "data",
                     "data": delta
@@ -136,7 +142,7 @@ async def execute_agent(redis_client, checkpointer, store, job):
                 await redis_client.xadd(job.thread_id, payload)
                 await redis_client.expire(job.thread_id, 3600)
 
-            print(f"\n-------- Final message output for job {job.id} -----\n")
+            # print(f"\n-------- Final message output for job {job.id} -----\n")
             full_message = await message.output
             usage = full_message.usage_metadata
             print(full_message)
@@ -180,9 +186,9 @@ async def execute_agent(redis_client, checkpointer, store, job):
         await redis_client.xadd(job.thread_id, error_payload)
         await redis_client.expire(job.thread_id, 3600)
 
-async def run_agent_and_cleanup(redis_client, checkpointer, store, job, lock, semaphore):
+async def run_agent_and_cleanup(redis_client, checkpointer, store, gcs_storage, job, lock, semaphore):
     try:
-        await execute_agent(redis_client, checkpointer, store, job)
+        await execute_agent(redis_client, checkpointer, store, gcs_storage, job)
     finally:
         try:
             await lock.release()
@@ -201,6 +207,9 @@ async def main():
     typed_postgres_pool = cast(AsyncConnectionPool[AsyncConnection[dict[str, Any]]], postgres_pool)
     checkpointer = AsyncPostgresSaver(typed_postgres_pool)
     store = AsyncPostgresStore(typed_postgres_pool)
+    session = aiohttp.ClientSession()
+    file_stream = io.StringIO(settings.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+    gcs_storage = Storage(service_file=file_stream, session=session)
 
     # The semaphore is placed in the main loop to control flow
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
@@ -231,7 +240,7 @@ async def main():
                     continue
 
                 # 4. Create the background task
-                asyncio.create_task(run_agent_and_cleanup(redis_client, checkpointer, store, job, lock, semaphore))
+                asyncio.create_task(run_agent_and_cleanup(redis_client, checkpointer, store, gcs_storage, job, lock, semaphore))
 
             else:
                 # No job found, release the slot immediately and rest briefly
@@ -242,6 +251,7 @@ async def main():
         await redis_client.aclose()
         await redis_pool.disconnect()
         await postgres_pool.close()
+        await session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
