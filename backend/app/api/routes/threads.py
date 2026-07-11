@@ -1,44 +1,61 @@
 import redis
-import aiohttp
-from alembic.command import check
-from app.api.routes.utils import delete_langgraph_threads
-import shortuuid
 import asyncio
 import json
 import re
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
+import aiohttp
+import shortuuid
+from alembic.command import check
 from alembic.util import msg
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, Header, Depends
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    UploadFile,
+    Header
+)
 from fastapi.responses import StreamingResponse
+from fastapi_limiter.depends import RateLimiter
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.store.postgres.aio import AsyncPostgresStore
+from pyrate_limiter import Limiter
 from redis.asyncio import Redis
 from sqlalchemy.testing.config import db
 from sqlmodel import col, func, select
 
-from langgraph.store.postgres.aio import AsyncPostgresStore
-
-from app.api.deps import AllowedAgent, AllowedThread, CurrentUser, SessionDep, reusable_oauth2
+from app.api.deps import (
+    AllowedAgent,
+    AllowedThread,
+    CurrentUser,
+    SessionDep,
+    reusable_oauth2,
+)
+from app.api.routes.utils import delete_langgraph_threads
 from app.core.config import settings
+from app.core.security import general_bucket, premium_bucket
+from app.gcs_backend import GCSBackend
 from app.models import (
     Agent,
     ChatRequest,
     Message,
     Thread,
+    ThreadContentPublic,
     ThreadCreate,
     ThreadPublic,
     ThreadsPublic,
     ThreadUpdate,
-    ThreadContentPublic
 )
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langchain_core.runnables import RunnableConfig
-from app.gcs_backend import GCSBackend
 
+baseRouter = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(Limiter(general_bucket)))])
 
-router = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2)])
+premiumRouter = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(Limiter(premium_bucket)))])
 
-@router.post("/", response_model=ThreadPublic, status_code=201)
+@baseRouter.post("/", response_model=ThreadPublic, status_code=201)
 async def create_thread(
     session: SessionDep, current_user: CurrentUser, allowed_agent: AllowedAgent, thread_in: ThreadCreate
 ) -> Any:
@@ -54,8 +71,7 @@ async def create_thread(
     return ThreadPublic.model_validate(db_thread)
 
 async def redis_sse_generator(thread_id: str, last_id: str = '0'):
-    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
-
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True) #separate client for continous reading
     try:
         while True:
             events = await redis_client.xread({thread_id: last_id}, count=1, block=1000)  # Block for 1 second
@@ -74,20 +90,19 @@ async def redis_sse_generator(thread_id: str, last_id: str = '0'):
 
                     if payload.get("type") in ["done", "error"]:
                         return
-    finally:
-        await redis_client.close()
+    except Exception as e:
+        print(f"Error in SSE generator: {e}")
+        yield f"data: error: {str(e)}\n\n"
 
-@router.post("/{thread_id}/stream")
+@premiumRouter.post("/{thread_id}/stream")
 async def stream_thread_conversation(
-    agent: AllowedAgent, current_user: CurrentUser, thread: AllowedThread, session: SessionDep, chat_request: ChatRequest, 
+    agent: AllowedAgent, current_user: CurrentUser, thread: AllowedThread, request: Request, chat_request: ChatRequest,
 ) -> Any:
     """
     Send a message and stream the resulting conversation for a given thread.
     """
 
-    redis_client = Redis.from_url(settings.REDIS_URL)
-
-   ## MAKE SURE TO RATE LIMIT USERS AND STUFF SO KEY IS NOT OVERUSED.
+    redis_client = request.app.state.redis_client
 
     job_payload = {
         **agent.model_dump(mode="json"),
@@ -106,43 +121,42 @@ async def stream_thread_conversation(
     last_id = stream_info['last-generated-id'] if stream_info else '0'
 
     await redis_client.lpush("agent_jobs_queue", json.dumps(job_payload))
-    await redis_client.close()
 
     return StreamingResponse(
         redis_sse_generator(thread.id, last_id),
         media_type="text/event-stream"
     )
 
-@router.post("/{thread_id}/stop_stream")
+@baseRouter.post("/{thread_id}/stop_stream")
 async def stop_stream_thread_conversation(
-    thread: AllowedThread, current_user: CurrentUser
+    thread: AllowedThread, request: Request
 ) -> Any:
     """
     Stop streaming a conversation for a given thread.
     """
-    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    redis_client = request.app.state.redis_client
 
     curr_thread_state = await redis_client.get(f"thread_status:{thread.id}")
     print("curr_thread_state", curr_thread_state)
     if curr_thread_state != "RUNNING":
-        await redis_client.close()
         raise HTTPException(status_code=400, detail="Thread is not currently running.")
 
     await redis_client.set(f"thread_status:{thread.id}", "STOP")
-    await redis_client.close()
     return Message(message="Stream stopped successfully.")
 
-@router.post("/{thread_id}/files")
-async def upload(thread: AllowedThread, file: UploadFile, request: Request) -> Any:
+@baseRouter.post("/{thread_id}/files")
+async def upload(thread: AllowedThread, file: UploadFile, request: Request, content_length: Annotated[int, Header()]) -> Any:
     """Stage a user file for a thread. Returns the path the client should send
     back with its next chat message as a newly-attached file."""
-    #TODO: Add a check to ensure the file is not too large
+    if content_length > settings.MAX_FILE_UPLOAD_SIZE or (file.size or 0) > settings.MAX_FILE_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="File is too large.")
+
     raw = await file.read()
     scoped = GCSBackend(request.app.state.gcs_storage, settings.GCS_BUCKET_NAME, root_prefix="agent-files", thread_id=thread.id)
     path = scoped.put_upload(f"/{file.filename}", raw, content_type=file.content_type)
     return {"path": path}   # e.g. "/invoice.pdf"
 
-@router.get("/{thread_id}/files")
+@baseRouter.get("/{thread_id}/files")
 async def list_files(thread: AllowedThread, request: Request) -> Any:
     """List all files staged for a thread."""
     scoped = GCSBackend(request.app.state.gcs_storage, settings.GCS_BUCKET_NAME, root_prefix="agent-files", thread_id=thread.id)
@@ -151,7 +165,7 @@ async def list_files(thread: AllowedThread, request: Request) -> Any:
         return {"files": []}
     return {"files": [entry["path"] for entry in ls_result.entries]}  # e.g. ["/invoice.pdf", "/image.png"]
 
-@router.get("/", response_model=ThreadsPublic)
+@baseRouter.get("/", response_model=ThreadsPublic)
 async def read_threads(
     session: SessionDep, current_user: CurrentUser, agent: AllowedAgent, skip: int = 0, limit: int = 100
 ) -> Any:
@@ -181,7 +195,7 @@ async def read_threads(
     threads_public = [ThreadPublic.model_validate(thread) for thread in threads]
     return ThreadsPublic(data=threads_public, count=count)
 
-@router.get("/{thread_id}", response_model=ThreadContentPublic)
+@baseRouter.get("/{thread_id}", response_model=ThreadContentPublic)
 async def read_thread(
     thread: AllowedThread, request: Request
 ) -> Any:
@@ -209,7 +223,7 @@ async def read_thread(
 
     return ThreadContentPublic.model_validate(thread, update={"messages": output_messages})
 
-@router.patch("/{thread_id}", response_model=ThreadPublic)
+@baseRouter.patch("/{thread_id}", response_model=ThreadPublic)
 async def update_thread(
     session: SessionDep, thread: AllowedThread, thread_update: ThreadUpdate
 ) -> Any:
@@ -223,7 +237,7 @@ async def update_thread(
     await session.refresh(thread)
     return ThreadPublic.model_validate(thread)
 
-@router.delete("/{thread_id}/files/{file_path}")
+@baseRouter.delete("/{thread_id}/files/{file_path}")
 async def delete_file(thread: AllowedThread, file_path: str, request: Request) -> Message:
     """Delete a file from a thread's media store."""
     storage = request.app.state.gcs_storage
@@ -236,7 +250,7 @@ async def delete_file(thread: AllowedThread, file_path: str, request: Request) -
         raise HTTPException(500, "Unexpected Error")
     return Message(message="File deleted successfully.")
 
-@router.delete("/{thread_id}")
+@baseRouter.delete("/{thread_id}")
 async def delete_thread(
     session: SessionDep, thread: AllowedThread, request: Request, background_tasks: BackgroundTasks
 ) -> Message:
@@ -246,7 +260,7 @@ async def delete_thread(
     await session.delete(thread)
     await session.commit()
 
-    background_tasks.add_task(delete_langgraph_threads, [thread.id], request.app.state.connection_pool, request.app.state.gcs_storage, settings.GCS_BUCKET_NAME)
+    background_tasks.add_task(delete_langgraph_threads, [thread.id], request.app.state.connection_pool, request.app.state.gcs_storage)
 
     return Message(message="Thread deleted successfully")
     ##ALSO DELETE ALL CHECKPOINTS (MESSAGE HISTORY) FOR THIS THREAD

@@ -162,6 +162,13 @@ services:
       # Enable redirection for HTTP and HTTPS
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.middlewares=https-redirect
 
+       # 1. Define the limit (namespaced to the stack, like your other resources)
+      - "traefik.http.middlewares.${STACK_NAME?Variable not set}-backend-limit.buffering.maxRequestBodyBytes=15728640"
+      - "traefik.http.middlewares.${STACK_NAME?Variable not set}-backend-limit.buffering.memRequestBodyBytes=2097152"
+
+      # 2. Attach it to the router that actually serves uploads
+      - "traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.middlewares=${STACK_NAME?Variable not set}-backend-limit"
+
   agent-worker:
     <<: *backend-config
     networks:

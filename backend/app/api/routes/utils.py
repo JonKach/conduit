@@ -45,7 +45,6 @@ async def delete_langgraph_threads(
     thread_ids: list[str], 
     connection_pool, 
     gcs_storage,
-    bucket_name: str
 ) -> None:
     """
     Delete all thread checkpoints for a list of thread IDs and cleanup GCS files.
@@ -66,7 +65,7 @@ async def delete_langgraph_threads(
 
     await asyncio.gather(*(delete_thread_files(tid) for tid in thread_ids), return_exceptions=True)
 
-    bucket = Bucket(gcs_storage, bucket_name)
+    bucket = Bucket(gcs_storage, settings.GCS_BUCKET_NAME)
 
     gcs_search_tasks = [bucket.list_blobs(prefix=f"agent-files/{tid}/") for tid in thread_ids]
 
@@ -77,7 +76,7 @@ async def delete_langgraph_threads(
     async def _safe_delete_blob(blob_name: str, thread_id: str):
         async with blob_sem:
             try:
-                await gcs_storage.delete(bucket_name, blob_name)
+                await gcs_storage.delete(settings.GCS_BUCKET_NAME, blob_name)
             except Exception as e:
                 print(f"Failed to delete blob {blob_name} for thread {thread_id}: {e}")
 
@@ -119,7 +118,7 @@ async def search_and_delete(search_tasks, store: AsyncPostgresStore, resources: 
     if delete_tasks:
         await asyncio.gather(*delete_tasks)
 
-async def delete_agent_store(agent_ids: list[str], connection_pool) -> None:
+async def delete_agent_store(agent_ids: list[str], connection_pool, gcs_storage) -> None:
     """
     Delete all long-term store entries (skills & memories) for a list of agent IDs.
     """
@@ -133,7 +132,14 @@ async def delete_agent_store(agent_ids: list[str], connection_pool) -> None:
         store.asearch((agent_id,), limit=1000) for agent_id in agent_ids
     ]
 
+    delete_profile_picture_tasks = [
+        gcs_storage.delete(settings.GCS_BUCKET_NAME, f"agent-profiles/{agent_id}") for agent_id in agent_ids
+    ]
+
     await search_and_delete(search_tasks, store, agent_ids)
+
+    if delete_profile_picture_tasks:
+        await asyncio.gather(*delete_profile_picture_tasks)
 
 async def delete_user_memories(user_id: str, connection_pool) -> None:
     """

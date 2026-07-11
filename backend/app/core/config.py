@@ -141,5 +141,7 @@ class Settings(BaseSettings):
 
         return self
 
+    MAX_FILE_UPLOAD_SIZE: int = 1024 * 1024 * 15  # 15 MB
+
 
 settings = Settings()  # type: ignore

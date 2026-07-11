@@ -1,15 +1,32 @@
-from ast import Pass
+import io
 import stat
 import uuid
-from typing import Any, Annotated
+from ast import Pass
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends, UploadFile, Form
+import magic
+from docx import Document
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    Header
+)
+from fastapi_limiter.depends import RateLimiter
 from langgraph.store.postgres.aio import AsyncPostgresStore
+from pypdf import PdfReader
+from pyrate_limiter import Limiter
 from sqlalchemy import update
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, func, select
 
 from app.api.deps import AllowedAgent, CurrentUser, SessionDep, reusable_oauth2
+from app.core.config import settings
+from app.core.security import general_bucket
 from app.models import (
     Agent,
     AgentCreate,
@@ -20,16 +37,10 @@ from app.models import (
     Thread,
 )
 
-from .utils import delete_langgraph_threads, delete_agent_store
+from .utils import delete_agent_store, delete_langgraph_threads
+from gcloud.aio.storage import Bucket
 
-import io
-import magic
-from pypdf import PdfReader
-from docx import Document
-
-from app.core.config import settings
-
-router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(reusable_oauth2)])
+router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(Limiter(general_bucket)))])
 
 
 @router.get("/me", response_model=AgentsPublic)
@@ -112,6 +123,22 @@ async def read_agent(agent: AllowedAgent) -> Any:
     agent_public = AgentPublic.model_validate(agent, update={"owner_name": user})
     return agent_public
 
+@router.get("/{agent_id}/profile-picture")
+async def get_profile_picture(agent: AllowedAgent, request: Request) -> Any:
+    """
+    Get the profile picture of an agent.
+    """
+    storage = request.app.state.gcs_storage
+    profile_picture_path = f"agent-profiles/{agent.id}"
+    bucket = Bucket(storage, settings.GCS_BUCKET_NAME)
+    exists = await bucket.blob_exists(profile_picture_path)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Profile picture not found")
+    blob = bucket.new_blob(profile_picture_path)
+    return await blob.get_signed_url(
+        60 * 60,                       # gcloud-aio expiration is in SECONDS
+        http_method="GET",
+    )
 
 @router.post("/", response_model=AgentPublic)
 async def create_agent(
@@ -136,11 +163,15 @@ ALLOWED_MIME_TYPES = {
 @router.post("/{agent_id}/skills")
 async def upload_skill(
     agent: AllowedAgent, current_user: CurrentUser, file: UploadFile, request: Request,
-    skill_name: Annotated[str, Form()], session: SessionDep
+    skill_name: Annotated[str, Form()], session: SessionDep, content_length: Annotated[int, Header()]
 ) -> Message:
 
     if not current_user.is_superuser and agent.owner_id != current_user:
         raise HTTPException(403, "Only the agent creator can upload skill files.")
+
+    MAX_SKILL_FILE_SIZE = 1024 * 1024 * 2  # 2 MB
+    if content_length > MAX_SKILL_FILE_SIZE or (file.size or 0) > MAX_SKILL_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File is too large.")
 
     store = AsyncPostgresStore(request.app.state.connection_pool)
 
@@ -175,7 +206,33 @@ async def upload_skill(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error parsing file: {str(e)}")
-    return Message(message="Skill uploaded successfuly!")
+    return Message(message="Skill uploaded successfully!")
+
+@router.post("/{agent_id}/profile-picture") #This also acts as the update profile endpoint
+async def upload_profile_picture(
+    agent: AllowedAgent, current_user: CurrentUser, file: UploadFile, request: Request,
+    content_length: Annotated[int, Header()]
+) -> Message:
+    if not current_user.is_superuser and agent.owner_id != current_user:
+        raise HTTPException(403, "Only the agent creator can upload profile pictures.")
+
+    MAX_IMAGE_FILE_SIZE = 1024 * 1024 * 5  # 5 MB
+    if content_length > MAX_IMAGE_FILE_SIZE or (file.size or 0) > MAX_IMAGE_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File is too large.")
+
+    contents = await file.read()
+    mime_type = magic.from_buffer(contents, mime=True)
+
+    if mime_type not in {"image/jpeg", "image/png", "image/gif"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Only .jpg, .jpeg, .png, and .gif files are allowed. You provided '{mime_type}'."
+        )
+
+    storage = request.app.state.gcs_storage
+    await storage.upload(settings.GCS_BUCKET_NAME, f"agent-profiles/{agent.id}", contents, content_type=mime_type)
+
+    return Message(message="Profile picture uploaded successfully!")
 
 @router.get("/{agent_id}/skills")
 async def get_skill_names(agent: AllowedAgent) -> Any:
@@ -234,8 +291,8 @@ async def delete_agent(
     result = await session.exec(statement)
     thread_ids = result.all()
 
-    background_tasks.add_task(delete_langgraph_threads, list(thread_ids), request.app.state.connection_pool, request.app.state.gcs_storage, settings.GCS_BUCKET_NAME)
-    background_tasks.add_task(delete_agent_store, [agent.id], request.app.state.connection_pool)
+    background_tasks.add_task(delete_langgraph_threads, list(thread_ids), request.app.state.connection_pool, request.app.state.gcs_storage)
+    background_tasks.add_task(delete_agent_store, [agent.id], request.app.state.connection_pool, request.app.state.gcs_storage)
     await session.delete(agent)
     await session.commit()
     return Message(message="Agent deleted successfully")
@@ -253,3 +310,16 @@ async def delete_skill(agent: AllowedAgent, skill_name: str, session: SessionDep
     await store.adelete((agent.id,), f"/{skill_name}/SKILL.md")
 
     return Message(message="Skill deleted successfully")
+
+@router.delete("/{agent_id}/profile-picture")
+async def delete_profile_picture(agent: AllowedAgent, current_user: CurrentUser, request: Request) -> Message:
+    """
+    Delete the profile picture of an agent.
+    """
+    if not current_user.is_superuser and agent.owner_id != current_user:
+        raise HTTPException(403, "Only the agent creator can delete profile pictures.")
+
+    storage = request.app.state.gcs_storage
+    await storage.delete(settings.GCS_BUCKET_NAME, f"agent-profiles/{agent.id}")
+
+    return Message(message="Profile picture deleted successfully")

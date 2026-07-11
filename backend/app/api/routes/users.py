@@ -1,3 +1,5 @@
+from pyrate_limiter import Limiter
+from fastapi_limiter.depends import RateLimiter
 import uuid
 from typing import Any
 
@@ -11,7 +13,7 @@ from app.api.deps import (
     get_current_active_superuser,
 )
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password
+from app.core.security import get_password_hash, verify_password, general_bucket
 from app.models import (
     Agent,
     Message,
@@ -32,7 +34,7 @@ import asyncio
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(RateLimiter(Limiter(general_bucket)))])
 
 
 @router.get(
@@ -217,11 +219,10 @@ async def handle_user_deletion(user: User, session: SessionDep, background_tasks
             list(thread_ids),
             request.app.state.connection_pool,
             request.app.state.gcs_storage,
-            settings.GCS_BUCKET_NAME
         )
 
     if private_agent_ids:
-        background_tasks.add_task(delete_agent_store, list(private_agent_ids), request.app.state.connection_pool)
+        background_tasks.add_task(delete_agent_store, list(private_agent_ids), request.app.state.connection_pool, request.app.state.gcs_storage)
 
     background_tasks.add_task(delete_user_memories, str(user.id), request.app.state.connection_pool)
 

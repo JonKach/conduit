@@ -5,6 +5,8 @@ import jwt
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.bcrypt import BcryptHasher
+from pyrate_limiter import Duration, Rate, RedisBucket
+from redis import Redis
 
 from app.core.config import settings
 
@@ -14,6 +16,7 @@ password_hash = PasswordHash(
         BcryptHasher(),
     )
 )
+
 
 
 ALGORITHM = "HS256"
@@ -34,3 +37,17 @@ def verify_password(
 
 def get_password_hash(password: str) -> str:
     return password_hash.hash(password)
+
+redis_conn = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+general_bucket = RedisBucket.init(
+    rates=[Rate(15, Duration.MINUTE)],
+    redis=redis_conn,
+    bucket_key="general-limits"
+)
+
+premium_bucket = RedisBucket.init(
+    rates=[Rate(2, Duration.MINUTE)],
+    redis=redis_conn,
+    bucket_key="api-call-limits"
+)

@@ -1,3 +1,4 @@
+from pyrate_limiter import RedisBucket
 import aiohttp
 import sentry_sdk
 from fastapi import FastAPI
@@ -16,6 +17,9 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from gcloud.aio.storage import Storage
 import json
 import io
+
+from redis.asyncio import Redis
+from pyrate_limiter import Duration, Limiter, Rate, RedisBucket
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
@@ -45,8 +49,12 @@ async def lifespan(app: FastAPI):
     file_stream = io.StringIO(settings.GOOGLE_APPLICATION_CREDENTIALS_JSON)
     app.state.gcs_storage = Storage(service_file=file_stream, session=session)
 
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    app.state.redis_client = redis_client
+
     yield
     await typed_postgres_pool.close()
+    await redis_client.aclose()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
