@@ -19,14 +19,13 @@ from fastapi import (
 from fastapi_limiter.depends import RateLimiter
 from langgraph.store.postgres.aio import AsyncPostgresStore
 from pypdf import PdfReader
-from pyrate_limiter import Limiter
 from sqlalchemy import update
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, func, select
 
 from app.api.deps import AllowedAgent, CurrentUser, SessionDep, reusable_oauth2
 from app.core.config import settings
-from app.core.security import general_bucket
+from app.core.security import general_bucket, user_or_ip_identifier
 from app.models import (
     Agent,
     AgentCreate,
@@ -40,7 +39,7 @@ from app.models import (
 from .utils import delete_agent_store, delete_langgraph_threads
 from gcloud.aio.storage import Bucket
 
-router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(Limiter(general_bucket)))])
+router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))])
 
 
 @router.get("/me", response_model=AgentsPublic)

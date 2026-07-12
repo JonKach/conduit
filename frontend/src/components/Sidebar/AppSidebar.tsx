@@ -8,13 +8,15 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar"
+import { Separator } from "@/components/ui/separator"
 import useAuth from "@/hooks/useAuth"
 import { type Item, Main } from "./Main"
+import { RecentThreads } from "./RecentThreads"
 import { User } from "./User"
 
 const baseItems: Item[] = [
-  { icon: Home, title: "Dashboard", path: "/" },
-  { icon: Briefcase, title: "Items", path: "/items" },
+  { icon: Home, title: "My Agents", path: "/" },
+  { icon: Briefcase, title: "Marketplace", path: "/marketplace" },
 ]
 
 export function AppSidebar() {
@@ -31,6 +33,8 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <Main items={items} />
+        <Separator className="mx-2 w-auto" />
+        <RecentThreads />
       </SidebarContent>
       <SidebarFooter>
         <SidebarAppearance />

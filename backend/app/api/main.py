@@ -10,6 +10,7 @@ api_router.include_router(utils.router)
 api_router.include_router(agents.router)
 api_router.include_router(threads.baseRouter)
 api_router.include_router(threads.premiumRouter)
+api_router.include_router(threads.recentRouter)
 
 
 if settings.ENVIRONMENT == "local":

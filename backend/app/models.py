@@ -170,6 +170,13 @@ class ThreadsPublic(SQLModel):
 class ThreadContentPublic(ThreadPublic):
     messages: list[dict]
 
+class ThreadWithAgentPublic(ThreadPublic):
+    agent_name: str
+
+class RecentThreadsPublic(SQLModel):
+    data: list[ThreadWithAgentPublic]
+    count: int
+
 class ChatRequest(SQLModel):
     message: str
     model: str

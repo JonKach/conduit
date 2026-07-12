@@ -23,7 +23,6 @@ from fastapi_limiter.depends import RateLimiter
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres.aio import AsyncPostgresStore
-from pyrate_limiter import Limiter
 from redis.asyncio import Redis
 from sqlalchemy.testing.config import db
 from sqlmodel import col, func, select
@@ -37,23 +36,70 @@ from app.api.deps import (
 )
 from app.api.routes.utils import delete_langgraph_threads
 from app.core.config import settings
-from app.core.security import general_bucket, premium_bucket
+from app.core.security import general_bucket, premium_bucket, user_or_ip_identifier
 from app.gcs_backend import GCSBackend
 from app.models import (
     Agent,
     ChatRequest,
     Message,
+    RecentThreadsPublic,
     Thread,
     ThreadContentPublic,
     ThreadCreate,
     ThreadPublic,
     ThreadsPublic,
     ThreadUpdate,
+    ThreadWithAgentPublic,
+    get_datetime_utc,
 )
 
-baseRouter = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(Limiter(general_bucket)))])
+baseRouter = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))])
 
-premiumRouter = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(Limiter(premium_bucket)))])
+premiumRouter = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(premium_bucket, identifier=user_or_ip_identifier))])
+
+recentRouter = APIRouter(prefix="/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))])
+
+@recentRouter.get("/recent", response_model=RecentThreadsPublic)
+async def read_recent_threads(
+    session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 10
+) -> Any:
+    """
+    Retrieve the current user's most recently active threads across all agents.
+    """
+    limit = min(limit, 50)
+
+    count_statement = (
+        select(func.count())
+        .select_from(Thread)
+        .where(Thread.user_id == current_user.id)
+    )
+    count = await session.exec(count_statement)
+    count = count.one()
+
+    statement = (
+        select(Thread)
+        .where(Thread.user_id == current_user.id)
+        .order_by(col(Thread.last_modified).desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    threads = await session.exec(statement)
+    threads = threads.all()
+
+    agent_ids = {thread.agent_id for thread in threads}
+    agent_names: dict[str, str] = {}
+    if agent_ids:
+        agents_statement = select(Agent.id, Agent.name).where(col(Agent.id).in_(agent_ids))
+        agent_rows = await session.exec(agents_statement)
+        agent_names = dict(agent_rows.all())
+
+    threads_public = [
+        ThreadWithAgentPublic.model_validate(
+            thread, update={"agent_name": agent_names.get(thread.agent_id, "Unknown Agent")}
+        )
+        for thread in threads
+    ]
+    return RecentThreadsPublic(data=threads_public, count=count)
 
 @baseRouter.post("/", response_model=ThreadPublic, status_code=201)
 async def create_thread(
@@ -86,23 +132,27 @@ async def redis_sse_generator(thread_id: str, last_id: str = '0'):
                     payload: dict = message_data #type: ignore
 
                     # SSE format
-                    yield f"data: {message_data} @ message_id {message_id}\n\n"
+                    yield f"data: {json.dumps({**payload, 'id': message_id})}\n\n"
 
                     if payload.get("type") in ["done", "error"]:
                         return
     except Exception as e:
         print(f"Error in SSE generator: {e}")
-        yield f"data: error: {str(e)}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'id': last_id})}\n\n"
 
 @premiumRouter.post("/{thread_id}/stream")
 async def stream_thread_conversation(
-    agent: AllowedAgent, current_user: CurrentUser, thread: AllowedThread, request: Request, chat_request: ChatRequest,
+    session: SessionDep, agent: AllowedAgent, current_user: CurrentUser, thread: AllowedThread, request: Request, chat_request: ChatRequest,
 ) -> Any:
     """
     Send a message and stream the resulting conversation for a given thread.
     """
 
     redis_client = request.app.state.redis_client
+
+    thread.sqlmodel_update({"last_modified": get_datetime_utc()})
+    session.add(thread)
+    await session.commit()
 
     job_payload = {
         **agent.model_dump(mode="json"),
@@ -153,7 +203,7 @@ async def upload(thread: AllowedThread, file: UploadFile, request: Request, cont
 
     raw = await file.read()
     scoped = GCSBackend(request.app.state.gcs_storage, settings.GCS_BUCKET_NAME, root_prefix="agent-files", thread_id=thread.id)
-    path = scoped.put_upload(f"/{file.filename}", raw, content_type=file.content_type)
+    path = await scoped.put_upload(f"/{file.filename}", raw, content_type=file.content_type)
     return {"path": path}   # e.g. "/invoice.pdf"
 
 @baseRouter.get("/{thread_id}/files")

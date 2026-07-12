@@ -3,22 +3,22 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { ItemsReadItemsData, ItemsReadItemsResponse, ItemsCreateItemData, ItemsCreateItemResponse, ItemsReadItemData, ItemsReadItemResponse, ItemsUpdateItemData, ItemsUpdateItemResponse, ItemsDeleteItemData, ItemsDeleteItemResponse, LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
+import type { AgentsReadAgentsData, AgentsReadAgentsResponse, AgentsReadPublicAgentsData, AgentsReadPublicAgentsResponse, AgentsReadAgentData, AgentsReadAgentResponse, AgentsUpdateAgentData, AgentsUpdateAgentResponse, AgentsDeleteAgentData, AgentsDeleteAgentResponse, AgentsGetProfilePictureData, AgentsGetProfilePictureResponse, AgentsUploadProfilePictureData, AgentsUploadProfilePictureResponse, AgentsDeleteProfilePictureData, AgentsDeleteProfilePictureResponse, AgentsCreateAgentData, AgentsCreateAgentResponse, AgentsUploadSkillData, AgentsUploadSkillResponse, AgentsGetSkillNamesData, AgentsGetSkillNamesResponse, AgentsGetSkillContentData, AgentsGetSkillContentResponse, AgentsDeleteSkillData, AgentsDeleteSkillResponse, LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, ThreadsCreateThreadData, ThreadsCreateThreadResponse, ThreadsReadThreadsData, ThreadsReadThreadsResponse, ThreadsStopStreamThreadConversationData, ThreadsStopStreamThreadConversationResponse, ThreadsUploadData, ThreadsUploadResponse, ThreadsListFilesData, ThreadsListFilesResponse, ThreadsReadThreadData, ThreadsReadThreadResponse, ThreadsUpdateThreadData, ThreadsUpdateThreadResponse, ThreadsDeleteThreadData, ThreadsDeleteThreadResponse, ThreadsDeleteFileData, ThreadsDeleteFileResponse, ThreadsStreamThreadConversationData, ThreadsStreamThreadConversationResponse, ThreadsReadRecentThreadsData, ThreadsReadRecentThreadsResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsGetToolsResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
 
-export class ItemsService {
+export class AgentsService {
     /**
-     * Read Items
-     * Retrieve items.
+     * Read Agents
+     * Retrieve all agents associated with the current user's account.
      * @param data The data for the request.
      * @param data.skip
      * @param data.limit
-     * @returns ItemsPublic Successful Response
+     * @returns AgentsPublic Successful Response
      * @throws ApiError
      */
-    public static readItems(data: ItemsReadItemsData = {}): CancelablePromise<ItemsReadItemsResponse> {
+    public static readAgents(data: AgentsReadAgentsData = {}): CancelablePromise<AgentsReadAgentsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/items/',
+            url: '/api/v1/agents/me',
             query: {
                 skip: data.skip,
                 limit: data.limit
@@ -30,39 +30,21 @@ export class ItemsService {
     }
     
     /**
-     * Create Item
-     * Create new item.
+     * Read Public Agents
+     * Retrieve all public agents.
      * @param data The data for the request.
-     * @param data.requestBody
-     * @returns ItemPublic Successful Response
+     * @param data.skip
+     * @param data.limit
+     * @returns AgentsPublic Successful Response
      * @throws ApiError
      */
-    public static createItem(data: ItemsCreateItemData): CancelablePromise<ItemsCreateItemResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/items/',
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Read Item
-     * Get item by ID.
-     * @param data The data for the request.
-     * @param data.id
-     * @returns ItemPublic Successful Response
-     * @throws ApiError
-     */
-    public static readItem(data: ItemsReadItemData): CancelablePromise<ItemsReadItemResponse> {
+    public static readPublicAgents(data: AgentsReadPublicAgentsData = {}): CancelablePromise<AgentsReadPublicAgentsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/items/{id}',
-            path: {
-                id: data.id
+            url: '/api/v1/agents/public',
+            query: {
+                skip: data.skip,
+                limit: data.limit
             },
             errors: {
                 422: 'Validation Error'
@@ -71,20 +53,41 @@ export class ItemsService {
     }
     
     /**
-     * Update Item
-     * Update an item.
+     * Read Agent
+     * Get agent by ID.
      * @param data The data for the request.
-     * @param data.id
-     * @param data.requestBody
-     * @returns ItemPublic Successful Response
+     * @param data.agentId
+     * @returns AgentPublic Successful Response
      * @throws ApiError
      */
-    public static updateItem(data: ItemsUpdateItemData): CancelablePromise<ItemsUpdateItemResponse> {
+    public static readAgent(data: AgentsReadAgentData): CancelablePromise<AgentsReadAgentResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/{agent_id}',
+            path: {
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Agent
+     * Update an agent.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @param data.requestBody
+     * @returns AgentPublic Successful Response
+     * @throws ApiError
+     */
+    public static updateAgent(data: AgentsUpdateAgentData): CancelablePromise<AgentsUpdateAgentResponse> {
         return __request(OpenAPI, {
             method: 'PUT',
-            url: '/api/v1/items/{id}',
+            url: '/api/v1/agents/{agent_id}',
             path: {
-                id: data.id
+                agent_id: data.agentId
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -95,19 +98,202 @@ export class ItemsService {
     }
     
     /**
-     * Delete Item
-     * Delete an item.
+     * Delete Agent
+     * Delete an agent.
      * @param data The data for the request.
-     * @param data.id
+     * @param data.agentId
      * @returns Message Successful Response
      * @throws ApiError
      */
-    public static deleteItem(data: ItemsDeleteItemData): CancelablePromise<ItemsDeleteItemResponse> {
+    public static deleteAgent(data: AgentsDeleteAgentData): CancelablePromise<AgentsDeleteAgentResponse> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/api/v1/items/{id}',
+            url: '/api/v1/agents/{agent_id}',
             path: {
-                id: data.id
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Profile Picture
+     * Get the profile picture of an agent.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static getProfilePicture(data: AgentsGetProfilePictureData): CancelablePromise<AgentsGetProfilePictureResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/{agent_id}/profile-picture',
+            path: {
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Upload Profile Picture
+     * @param data The data for the request.
+     * @param data.agentId
+     * @param data.contentLength
+     * @param data.formData
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static uploadProfilePicture(data: AgentsUploadProfilePictureData): CancelablePromise<AgentsUploadProfilePictureResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/{agent_id}/profile-picture',
+            path: {
+                agent_id: data.agentId
+            },
+            headers: {
+                'content-length': data.contentLength
+            },
+            formData: data.formData,
+            mediaType: 'multipart/form-data',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Profile Picture
+     * Delete the profile picture of an agent.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static deleteProfilePicture(data: AgentsDeleteProfilePictureData): CancelablePromise<AgentsDeleteProfilePictureResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/agents/{agent_id}/profile-picture',
+            path: {
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Create Agent
+     * Create new agent.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns AgentPublic Successful Response
+     * @throws ApiError
+     */
+    public static createAgent(data: AgentsCreateAgentData): CancelablePromise<AgentsCreateAgentResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Upload Skill
+     * @param data The data for the request.
+     * @param data.agentId
+     * @param data.contentLength
+     * @param data.formData
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static uploadSkill(data: AgentsUploadSkillData): CancelablePromise<AgentsUploadSkillResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/{agent_id}/skills',
+            path: {
+                agent_id: data.agentId
+            },
+            headers: {
+                'content-length': data.contentLength
+            },
+            formData: data.formData,
+            mediaType: 'multipart/form-data',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Skill Names
+     * Get all skill names for an agent.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static getSkillNames(data: AgentsGetSkillNamesData): CancelablePromise<AgentsGetSkillNamesResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/{agent_id}/skills',
+            path: {
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Skill Content
+     * Get the content of a specific skill for an agent.
+     * @param data The data for the request.
+     * @param data.skillName
+     * @param data.agentId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static getSkillContent(data: AgentsGetSkillContentData): CancelablePromise<AgentsGetSkillContentResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/{agent_id}/skills/{skill_name}',
+            path: {
+                skill_name: data.skillName,
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Skill
+     * Delete a skill from an agent.
+     * @param data The data for the request.
+     * @param data.skillName
+     * @param data.agentId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static deleteSkill(data: AgentsDeleteSkillData): CancelablePromise<AgentsDeleteSkillResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/agents/{agent_id}/skills/{skill_name}',
+            path: {
+                skill_name: data.skillName,
+                agent_id: data.agentId
             },
             errors: {
                 422: 'Validation Error'
@@ -228,6 +414,282 @@ export class PrivateService {
             url: '/api/v1/private/users/',
             body: data.requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
+export class ThreadsService {
+    /**
+     * Create Thread
+     * Create a new thread.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @param data.requestBody
+     * @returns ThreadPublic Successful Response
+     * @throws ApiError
+     */
+    public static createThread(data: ThreadsCreateThreadData): CancelablePromise<ThreadsCreateThreadResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/{agent_id}/threads/',
+            path: {
+                agent_id: data.agentId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read Threads
+     * Retrieve threads for an agent.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @param data.skip
+     * @param data.limit
+     * @returns ThreadsPublic Successful Response
+     * @throws ApiError
+     */
+    public static readThreads(data: ThreadsReadThreadsData): CancelablePromise<ThreadsReadThreadsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/{agent_id}/threads/',
+            path: {
+                agent_id: data.agentId
+            },
+            query: {
+                skip: data.skip,
+                limit: data.limit
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Stop Stream Thread Conversation
+     * Stop streaming a conversation for a given thread.
+     * @param data The data for the request.
+     * @param data.threadId
+     * @param data.agentId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static stopStreamThreadConversation(data: ThreadsStopStreamThreadConversationData): CancelablePromise<ThreadsStopStreamThreadConversationResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}/stop_stream',
+            path: {
+                thread_id: data.threadId,
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Upload
+     * Stage a user file for a thread. Returns the path the client should send
+     * back with its next chat message as a newly-attached file.
+     * @param data The data for the request.
+     * @param data.threadId
+     * @param data.agentId
+     * @param data.contentLength
+     * @param data.formData
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static upload(data: ThreadsUploadData): CancelablePromise<ThreadsUploadResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}/files',
+            path: {
+                thread_id: data.threadId,
+                agent_id: data.agentId
+            },
+            headers: {
+                'content-length': data.contentLength
+            },
+            formData: data.formData,
+            mediaType: 'multipart/form-data',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List Files
+     * List all files staged for a thread.
+     * @param data The data for the request.
+     * @param data.threadId
+     * @param data.agentId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static listFiles(data: ThreadsListFilesData): CancelablePromise<ThreadsListFilesResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}/files',
+            path: {
+                thread_id: data.threadId,
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read Thread
+     * Retrieve a thread by ID.
+     * @param data The data for the request.
+     * @param data.threadId
+     * @param data.agentId
+     * @returns ThreadContentPublic Successful Response
+     * @throws ApiError
+     */
+    public static readThread(data: ThreadsReadThreadData): CancelablePromise<ThreadsReadThreadResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}',
+            path: {
+                thread_id: data.threadId,
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Thread
+     * Update a thread by ID.
+     * @param data The data for the request.
+     * @param data.threadId
+     * @param data.agentId
+     * @param data.requestBody
+     * @returns ThreadPublic Successful Response
+     * @throws ApiError
+     */
+    public static updateThread(data: ThreadsUpdateThreadData): CancelablePromise<ThreadsUpdateThreadResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}',
+            path: {
+                thread_id: data.threadId,
+                agent_id: data.agentId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Thread
+     * Delete a thread by ID.
+     * @param data The data for the request.
+     * @param data.threadId
+     * @param data.agentId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static deleteThread(data: ThreadsDeleteThreadData): CancelablePromise<ThreadsDeleteThreadResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}',
+            path: {
+                thread_id: data.threadId,
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete File
+     * Delete a file from a thread's media store.
+     * @param data The data for the request.
+     * @param data.filePath
+     * @param data.threadId
+     * @param data.agentId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static deleteFile(data: ThreadsDeleteFileData): CancelablePromise<ThreadsDeleteFileResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}/files/{file_path}',
+            path: {
+                file_path: data.filePath,
+                thread_id: data.threadId,
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Stream Thread Conversation
+     * Send a message and stream the resulting conversation for a given thread.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @param data.threadId
+     * @param data.requestBody
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static streamThreadConversation(data: ThreadsStreamThreadConversationData): CancelablePromise<ThreadsStreamThreadConversationResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/{agent_id}/threads/{thread_id}/stream',
+            path: {
+                agent_id: data.agentId,
+                thread_id: data.threadId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read Recent Threads
+     * Retrieve the current user's most recently active threads across all agents.
+     * @param data The data for the request.
+     * @param data.skip
+     * @param data.limit
+     * @returns RecentThreadsPublic Successful Response
+     * @throws ApiError
+     */
+    public static readRecentThreads(data: ThreadsReadRecentThreadsData = {}): CancelablePromise<ThreadsReadRecentThreadsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/threads/recent',
+            query: {
+                skip: data.skip,
+                limit: data.limit
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -433,6 +895,19 @@ export class UsersService {
 }
 
 export class UtilsService {
+    /**
+     * Get Tools
+     * Get available tools.
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static getTools(): CancelablePromise<UtilsGetToolsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/utils/get-tools/'
+        });
+    }
+    
     /**
      * Test Email
      * Test emails.

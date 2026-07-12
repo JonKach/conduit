@@ -445,7 +445,7 @@ async def build_user_message(
         scoped = GCSBackend(storage, bucket, root_prefix=root_prefix, thread_id=thread_id)
         ls_result = await scoped.als("/")  # list all files for this thread
         if ls_result.entries:
-            text = text + "\n\nThe following files are available in the thread's media store (/media/). Use read_file to view them if relevant and not already loaded into context.\n" + "\n".join(
+            text = text + "\n\nAttached Files:" + "\n".join(
                 f"- /media{entry['path']}" for entry in ls_result.entries
             )
         return {"role": "user", "content": text}

@@ -16,8 +16,9 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout/settings'
-import { Route as LayoutItemsRouteImport } from './routes/_layout/items'
 import { Route as LayoutAdminRouteImport } from './routes/_layout/admin'
+import { Route as LayoutAgentsAgentIdRouteImport } from './routes/_layout/agents/$agentId'
+import { Route as LayoutThreadsAgentIdThreadIdRouteImport } from './routes/_layout/threads.$agentId.$threadId'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -53,16 +54,22 @@ const LayoutSettingsRoute = LayoutSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => LayoutRoute,
 } as any)
-const LayoutItemsRoute = LayoutItemsRouteImport.update({
-  id: '/items',
-  path: '/items',
-  getParentRoute: () => LayoutRoute,
-} as any)
 const LayoutAdminRoute = LayoutAdminRouteImport.update({
   id: '/admin',
   path: '/admin',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutAgentsAgentIdRoute = LayoutAgentsAgentIdRouteImport.update({
+  id: '/agents/$agentId',
+  path: '/agents/$agentId',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutThreadsAgentIdThreadIdRoute =
+  LayoutThreadsAgentIdThreadIdRouteImport.update({
+    id: '/threads/$agentId/$threadId',
+    path: '/threads/$agentId/$threadId',
+    getParentRoute: () => LayoutRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
@@ -71,8 +78,9 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/admin': typeof LayoutAdminRoute
-  '/items': typeof LayoutItemsRoute
   '/settings': typeof LayoutSettingsRoute
+  '/agents/$agentId': typeof LayoutAgentsAgentIdRoute
+  '/threads/$agentId/$threadId': typeof LayoutThreadsAgentIdThreadIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -80,9 +88,10 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/admin': typeof LayoutAdminRoute
-  '/items': typeof LayoutItemsRoute
   '/settings': typeof LayoutSettingsRoute
   '/': typeof LayoutIndexRoute
+  '/agents/$agentId': typeof LayoutAgentsAgentIdRoute
+  '/threads/$agentId/$threadId': typeof LayoutThreadsAgentIdThreadIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -92,9 +101,10 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/_layout/admin': typeof LayoutAdminRoute
-  '/_layout/items': typeof LayoutItemsRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/': typeof LayoutIndexRoute
+  '/_layout/agents/$agentId': typeof LayoutAgentsAgentIdRoute
+  '/_layout/threads/$agentId/$threadId': typeof LayoutThreadsAgentIdThreadIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -105,8 +115,9 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/admin'
-    | '/items'
     | '/settings'
+    | '/agents/$agentId'
+    | '/threads/$agentId/$threadId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -114,9 +125,10 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/admin'
-    | '/items'
     | '/settings'
     | '/'
+    | '/agents/$agentId'
+    | '/threads/$agentId/$threadId'
   id:
     | '__root__'
     | '/_layout'
@@ -125,9 +137,10 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/_layout/admin'
-    | '/_layout/items'
     | '/_layout/settings'
     | '/_layout/'
+    | '/_layout/agents/$agentId'
+    | '/_layout/threads/$agentId/$threadId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -189,13 +202,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutSettingsRouteImport
       parentRoute: typeof LayoutRoute
     }
-    '/_layout/items': {
-      id: '/_layout/items'
-      path: '/items'
-      fullPath: '/items'
-      preLoaderRoute: typeof LayoutItemsRouteImport
-      parentRoute: typeof LayoutRoute
-    }
     '/_layout/admin': {
       id: '/_layout/admin'
       path: '/admin'
@@ -203,21 +209,37 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutAdminRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/agents/$agentId': {
+      id: '/_layout/agents/$agentId'
+      path: '/agents/$agentId'
+      fullPath: '/agents/$agentId'
+      preLoaderRoute: typeof LayoutAgentsAgentIdRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/threads/$agentId/$threadId': {
+      id: '/_layout/threads/$agentId/$threadId'
+      path: '/threads/$agentId/$threadId'
+      fullPath: '/threads/$agentId/$threadId'
+      preLoaderRoute: typeof LayoutThreadsAgentIdThreadIdRouteImport
+      parentRoute: typeof LayoutRoute
+    }
   }
 }
 
 interface LayoutRouteChildren {
   LayoutAdminRoute: typeof LayoutAdminRoute
-  LayoutItemsRoute: typeof LayoutItemsRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
+  LayoutAgentsAgentIdRoute: typeof LayoutAgentsAgentIdRoute
+  LayoutThreadsAgentIdThreadIdRoute: typeof LayoutThreadsAgentIdThreadIdRoute
 }
 
 const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutAdminRoute: LayoutAdminRoute,
-  LayoutItemsRoute: LayoutItemsRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutIndexRoute: LayoutIndexRoute,
+  LayoutAgentsAgentIdRoute: LayoutAgentsAgentIdRoute,
+  LayoutThreadsAgentIdThreadIdRoute: LayoutThreadsAgentIdThreadIdRoute,
 }
 
 const LayoutRouteWithChildren =

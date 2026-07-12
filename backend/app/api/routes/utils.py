@@ -14,9 +14,16 @@ from app.core.db import AsyncSessionLocal
 from app.models import Agent, Message, Thread
 from app.utils import generate_test_email, send_email
 from gcloud.aio.storage import Storage, Bucket, Blob
+import json
 
 router = APIRouter(prefix="/utils", tags=["utils"])
 
+@router.get("/get-tools/")
+def get_tools() -> list[str]:
+    """
+    Get available tools.
+    """
+    return json.loads(open("app/available_tools.json").read())["available_tools"]
 
 @router.post(
     "/test-email/",

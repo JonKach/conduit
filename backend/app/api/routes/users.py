@@ -1,4 +1,3 @@
-from pyrate_limiter import Limiter
 from fastapi_limiter.depends import RateLimiter
 import uuid
 from typing import Any
@@ -13,7 +12,12 @@ from app.api.deps import (
     get_current_active_superuser,
 )
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password, general_bucket
+from app.core.security import (
+    get_password_hash,
+    verify_password,
+    general_bucket,
+    user_or_ip_identifier,
+)
 from app.models import (
     Agent,
     Message,
@@ -34,7 +38,7 @@ import asyncio
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 
-router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(RateLimiter(Limiter(general_bucket)))])
+router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))])
 
 
 @router.get(

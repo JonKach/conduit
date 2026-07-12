@@ -1,11 +1,23 @@
 from datetime import datetime, timedelta, timezone
+from time import time_ns
 from typing import Any
 
 import jwt
+from fastapi import Request
+from fastapi_limiter.identifier import default_identifier
+from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.bcrypt import BcryptHasher
-from pyrate_limiter import Duration, Rate, RedisBucket
+from pyrate_limiter import (
+    AbstractBucket,
+    BucketFactory,
+    Duration,
+    Limiter,
+    Rate,
+    RateItem,
+    RedisBucket,
+)
 from redis import Redis
 
 from app.core.config import settings
@@ -38,16 +50,66 @@ def verify_password(
 def get_password_hash(password: str) -> str:
     return password_hash.hash(password)
 
+async def user_or_ip_identifier(request: Request) -> str:
+    """Rate-limit key: per authenticated user when possible, else per client IP.
+
+    Behind a shared dev proxy every request can appear to come from the same
+    IP, and unauthenticated routes (login/signup) have no user yet, so this
+    prefers the JWT subject and falls back to fastapi_limiter's default
+    IP-based identifier.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.removeprefix("Bearer ")
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        except InvalidTokenError:
+            pass
+        else:
+            sub = payload.get("sub")
+            if sub:
+                return f"user:{sub}"
+    return await default_identifier(request)
+
+
+class KeyedRedisBucketFactory(BucketFactory):
+    """Gives each distinct rate-limit key its own Redis bucket.
+
+    fastapi_limiter's RateLimiter already computes a per-identifier key, but
+    pyrate_limiter's stock SingleBucketFactory ignores it and checks every
+    request against the same shared counter - so a single global bucket
+    means one caller's traffic can exhaust every other caller's quota. This
+    factory creates (and caches) one Redis-backed bucket per key instead.
+    """
+
+    def __init__(self, rates: list[Rate], redis: Redis, prefix: str):
+        self.rates = rates
+        self.redis = redis
+        self.prefix = prefix
+        self._buckets: dict[str, AbstractBucket] = {}
+
+    def wrap_item(self, name: str, weight: int = 1) -> RateItem:
+        return RateItem(name, time_ns() // 1_000_000, weight=weight)
+
+    def get(self, item: RateItem) -> AbstractBucket:
+        bucket = self._buckets.get(item.name)
+        if bucket is None:
+            bucket = RedisBucket.init(
+                rates=self.rates,
+                redis=self.redis,
+                bucket_key=f"{self.prefix}:{item.name}",
+            )
+            self.schedule_leak(bucket)
+            self._buckets[item.name] = bucket
+        return bucket
+
+
 redis_conn = Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
-general_bucket = RedisBucket.init(
-    rates=[Rate(15, Duration.MINUTE)],
-    redis=redis_conn,
-    bucket_key="general-limits"
+general_bucket = Limiter(
+    KeyedRedisBucketFactory([Rate(180, Duration.MINUTE)], redis_conn, "general-limits")
 )
 
-premium_bucket = RedisBucket.init(
-    rates=[Rate(2, Duration.MINUTE)],
-    redis=redis_conn,
-    bucket_key="api-call-limits"
+premium_bucket = Limiter(
+    KeyedRedisBucketFactory([Rate(2, Duration.MINUTE)], redis_conn, "api-call-limits")
 )
