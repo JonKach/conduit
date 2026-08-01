@@ -18,6 +18,9 @@ export type AgentPublic = {
     created_at?: (string | null);
     owner_name?: (string | null);
     can_edit?: boolean;
+    added_count?: (number | null);
+    is_added?: boolean;
+    is_owner?: boolean;
 };
 
 export type AgentsPublic = {
@@ -31,6 +34,10 @@ export type AgentUpdate = {
     system_prompt?: (string | null);
     tools_config?: Array<(string)>;
     is_public?: (boolean | null);
+};
+
+export type Body_agents_add_public_agent = {
+    agent_id: string;
 };
 
 export type Body_agents_upload_profile_picture = {
@@ -201,9 +208,23 @@ export type AgentsReadAgentsResponse = (AgentsPublic);
 export type AgentsReadPublicAgentsData = {
     limit?: number;
     skip?: number;
+    sort?: 'recent' | 'popular';
 };
 
 export type AgentsReadPublicAgentsResponse = (AgentsPublic);
+
+export type AgentsReadAddedPublicAgentsData = {
+    limit?: number;
+    skip?: number;
+};
+
+export type AgentsReadAddedPublicAgentsResponse = (AgentsPublic);
+
+export type AgentsAddPublicAgentData = {
+    requestBody: Body_agents_add_public_agent;
+};
+
+export type AgentsAddPublicAgentResponse = (Message);
 
 export type AgentsReadAgentData = {
     agentId: string;
@@ -277,6 +298,12 @@ export type AgentsDeleteSkillData = {
 };
 
 export type AgentsDeleteSkillResponse = (Message);
+
+export type AgentsRemovePublicAgentData = {
+    agentId: string;
+};
+
+export type AgentsRemovePublicAgentResponse = (Message);
 
 export type LoginLoginAccessTokenData = {
     formData: Body_login_login_access_token;

@@ -121,6 +121,27 @@ export const AgentPublicSchema = {
             type: 'boolean',
             title: 'Can Edit',
             default: false
+        },
+        added_count: {
+            anyOf: [
+                {
+                    type: 'integer'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Added Count'
+        },
+        is_added: {
+            type: 'boolean',
+            title: 'Is Added',
+            default: false
+        },
+        is_owner: {
+            type: 'boolean',
+            title: 'Is Owner',
+            default: false
         }
     },
     type: 'object',
@@ -210,6 +231,18 @@ export const AgentsPublicSchema = {
     type: 'object',
     required: ['data', 'count'],
     title: 'AgentsPublic'
+} as const;
+
+export const Body_agents_add_public_agentSchema = {
+    properties: {
+        agent_id: {
+            type: 'string',
+            title: 'Agent Id'
+        }
+    },
+    type: 'object',
+    required: ['agent_id'],
+    title: 'Body_agents-add_public_agent'
 } as const;
 
 export const Body_agents_upload_profile_pictureSchema = {

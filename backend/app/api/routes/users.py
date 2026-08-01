@@ -2,7 +2,7 @@ from fastapi_limiter.depends import RateLimiter
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks, Body
 from sqlmodel import col, delete, func, select, update, Session
 
 from app import crud
@@ -176,7 +176,6 @@ async def read_user_by_id(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
-
 
 @router.patch(
     "/{user_id}",

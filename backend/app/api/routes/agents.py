@@ -2,7 +2,7 @@ import io
 import stat
 import uuid
 from ast import Pass
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import magic
 from docx import Document
@@ -14,7 +14,8 @@ from fastapi import (
     HTTPException,
     Request,
     UploadFile,
-    Header
+    Header,
+    Body
 )
 from fastapi_limiter.depends import RateLimiter
 from langgraph.store.postgres.aio import AsyncPostgresStore
@@ -34,6 +35,7 @@ from app.models import (
     AgentUpdate,
     Message,
     Thread,
+    UserPublicAgentsLink
 )
 
 from .utils import delete_agent_store, delete_langgraph_threads
@@ -72,45 +74,120 @@ async def read_agents(
 
 @router.get("/public", response_model=AgentsPublic)
 async def read_public_agents(
+    session: SessionDep,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
+    sort: Literal["recent", "popular"] = "recent",
+) -> Any:
+    """
+    Retrieve all public agents (marketplace). `sort=popular` orders by how
+    many users have added the agent to their own list.
+    """
+    # Superusers browse every agent here (public or not); everyone else only
+    # sees agents marked public. Only the WHERE clause differs between them.
+    base_filter = [] if current_user.is_superuser else [Agent.is_public]
+
+    count_statement = select(func.count()).select_from(Agent).where(*base_filter)
+    count = await session.exec(count_statement)
+    count = count.one()
+
+    added_count_subq = (
+        select(
+            UserPublicAgentsLink.agent_id.label("agent_id"), #type: ignore
+            func.count().label("added_count"),
+        )
+        .group_by(UserPublicAgentsLink.agent_id)
+        .subquery()
+    )
+    added_count_col = func.coalesce(added_count_subq.c.added_count, 0)
+
+    statement = (
+        select(Agent, added_count_col)
+        .outerjoin(added_count_subq, Agent.id == added_count_subq.c.agent_id)
+        .options(selectinload(Agent.owner))  # Load the owner relationship eagerly
+        .where(*base_filter)
+    )
+    if sort == "popular":
+        statement = statement.order_by(added_count_col.desc(), col(Agent.created_at).desc())
+    else:
+        statement = statement.order_by(col(Agent.created_at).desc())
+    statement = statement.offset(skip).limit(limit)
+
+    rows = await session.exec(statement)
+    rows = rows.all()
+
+    added_ids_result = await session.exec(
+        select(UserPublicAgentsLink.agent_id).where(UserPublicAgentsLink.user_id == current_user.id)
+    )
+    added_ids = set(added_ids_result.all())
+
+    agents_public = [
+        AgentPublic.model_validate(
+            agent,
+            update={
+                "owner_name": agent.owner.full_name,
+                "added_count": added_count,
+                "is_added": agent.id in added_ids,
+                "is_owner": agent.owner_id == current_user.id,
+            },
+        )
+        for agent, added_count in rows
+    ]
+    return AgentsPublic(data=agents_public, count=count)
+
+@router.get("/added-public", response_model=AgentsPublic)
+async def read_added_public_agents(
     session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100
 ) -> Any:
     """
-    Retrieve all public agents.
+    Retrieve all public agents added by the current user.
     """
-    if current_user.is_superuser:
-        count_statement = select(func.count()).select_from(Agent)
-        count = await session.exec(count_statement)
-        count = count.one()
-        statement = (
-            select(Agent)
-            .options(selectinload(Agent.owner))  # Load the owner relationship eagerly
-            .order_by(col(Agent.created_at).desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        agents = await session.exec(statement)
-        agents = agents.all()
-    else:
-        count_statement = (
-            select(func.count())
-            .select_from(Agent)
-            .where(Agent.is_public)
-        )
-        count = await session.exec(count_statement)
-        count = count.one()
-        statement = (
-            select(Agent)
-            .options(selectinload(Agent.owner))  # Load the owner relationship eagerly
-            .where(Agent.is_public)
-            .order_by(col(Agent.created_at).desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        agents = await session.exec(statement)
-        agents = agents.all()
+    count_statement = (
+        select(func.count())
+        .select_from(UserPublicAgentsLink)
+        .where(UserPublicAgentsLink.user_id == current_user.id)
+    )
+    count = await session.exec(count_statement)
+    count = count.one()
 
-    agents_public = [AgentPublic.model_validate(agent, update={"owner_name": agent.owner.full_name}) for agent in agents]
+    statement = (
+        select(Agent)
+        .join(UserPublicAgentsLink)
+        .where(UserPublicAgentsLink.user_id == current_user.id)
+        .options(selectinload(Agent.owner))  # Load the owner relationship eagerly
+        .order_by(col(Agent.created_at).desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    agents = await session.exec(statement)
+    agents = agents.all()
+
+    agents_public = [
+        AgentPublic.model_validate(
+            agent, update={"owner_name": agent.owner.full_name, "is_added": True}
+        )
+        for agent in agents
+    ]
     return AgentsPublic(data=agents_public, count=count)
+
+@router.post("/added-public", response_model=Message)
+async def add_public_agent(current_user: CurrentUser, session: SessionDep, agent_id: str = Body(..., embed=True)) -> Message:
+    """
+    Add a public agent to the current user's list of added public agents.
+    """
+    agent = await session.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if not agent.is_public:
+        raise HTTPException(status_code=403, detail="Cannot add a non-public agent")
+    if agent.owner_id == current_user.id:
+        raise HTTPException(status_code=403, detail="Cannot add your own agent to added public agents")
+
+    link = UserPublicAgentsLink(agent_id=agent.id, user_id=current_user.id)
+    session.add(link)
+    await session.commit()
+    return Message(message="Public agent added successfully!")
 
 
 @router.get("/{agent_id}", response_model=AgentPublic)
@@ -312,6 +389,26 @@ async def delete_agent(
     await session.delete(agent)
     await session.commit()
     return Message(message="Agent deleted successfully")
+
+
+@router.delete("/added-public/{agent_id}")
+async def remove_public_agent(current_user: CurrentUser, session: SessionDep, agent_id: str) -> Message:
+    """
+    Remove a public agent from the current user's list of added public agents.
+    """
+    agent = await session.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if not agent.is_public:
+        raise HTTPException(status_code=403, detail="Cannot remove a non-public agent")
+
+    link = await session.get(UserPublicAgentsLink, (agent.id, current_user.id))
+    if not link:
+        raise HTTPException(status_code=404, detail="Public agent not found in your added list")
+
+    await session.delete(link)
+    await session.commit()
+    return Message(message="Public agent removed successfully")
 
 @router.delete("/{agent_id}/skills/{skill_name}")
 async def delete_skill(

@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { AgentsReadAgentsData, AgentsReadAgentsResponse, AgentsReadPublicAgentsData, AgentsReadPublicAgentsResponse, AgentsReadAgentData, AgentsReadAgentResponse, AgentsUpdateAgentData, AgentsUpdateAgentResponse, AgentsDeleteAgentData, AgentsDeleteAgentResponse, AgentsGetProfilePictureData, AgentsGetProfilePictureResponse, AgentsUploadProfilePictureData, AgentsUploadProfilePictureResponse, AgentsDeleteProfilePictureData, AgentsDeleteProfilePictureResponse, AgentsCreateAgentData, AgentsCreateAgentResponse, AgentsUploadSkillData, AgentsUploadSkillResponse, AgentsGetSkillNamesData, AgentsGetSkillNamesResponse, AgentsGetSkillContentData, AgentsGetSkillContentResponse, AgentsDeleteSkillData, AgentsDeleteSkillResponse, LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, ThreadsCreateThreadData, ThreadsCreateThreadResponse, ThreadsReadThreadsData, ThreadsReadThreadsResponse, ThreadsStopStreamThreadConversationData, ThreadsStopStreamThreadConversationResponse, ThreadsUploadData, ThreadsUploadResponse, ThreadsListFilesData, ThreadsListFilesResponse, ThreadsReadThreadData, ThreadsReadThreadResponse, ThreadsUpdateThreadData, ThreadsUpdateThreadResponse, ThreadsDeleteThreadData, ThreadsDeleteThreadResponse, ThreadsDeleteFileData, ThreadsDeleteFileResponse, ThreadsStreamThreadConversationData, ThreadsStreamThreadConversationResponse, ThreadsReadRecentThreadsData, ThreadsReadRecentThreadsResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsGetToolsResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
+import type { AgentsReadAgentsData, AgentsReadAgentsResponse, AgentsReadPublicAgentsData, AgentsReadPublicAgentsResponse, AgentsReadAddedPublicAgentsData, AgentsReadAddedPublicAgentsResponse, AgentsAddPublicAgentData, AgentsAddPublicAgentResponse, AgentsReadAgentData, AgentsReadAgentResponse, AgentsUpdateAgentData, AgentsUpdateAgentResponse, AgentsDeleteAgentData, AgentsDeleteAgentResponse, AgentsGetProfilePictureData, AgentsGetProfilePictureResponse, AgentsUploadProfilePictureData, AgentsUploadProfilePictureResponse, AgentsDeleteProfilePictureData, AgentsDeleteProfilePictureResponse, AgentsCreateAgentData, AgentsCreateAgentResponse, AgentsUploadSkillData, AgentsUploadSkillResponse, AgentsGetSkillNamesData, AgentsGetSkillNamesResponse, AgentsGetSkillContentData, AgentsGetSkillContentResponse, AgentsDeleteSkillData, AgentsDeleteSkillResponse, AgentsRemovePublicAgentData, AgentsRemovePublicAgentResponse, LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, ThreadsCreateThreadData, ThreadsCreateThreadResponse, ThreadsReadThreadsData, ThreadsReadThreadsResponse, ThreadsStopStreamThreadConversationData, ThreadsStopStreamThreadConversationResponse, ThreadsUploadData, ThreadsUploadResponse, ThreadsListFilesData, ThreadsListFilesResponse, ThreadsReadThreadData, ThreadsReadThreadResponse, ThreadsUpdateThreadData, ThreadsUpdateThreadResponse, ThreadsDeleteThreadData, ThreadsDeleteThreadResponse, ThreadsDeleteFileData, ThreadsDeleteFileResponse, ThreadsStreamThreadConversationData, ThreadsStreamThreadConversationResponse, ThreadsReadRecentThreadsData, ThreadsReadRecentThreadsResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsGetToolsResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
 
 export class AgentsService {
     /**
@@ -31,10 +31,12 @@ export class AgentsService {
     
     /**
      * Read Public Agents
-     * Retrieve all public agents.
+     * Retrieve all public agents (marketplace). `sort=popular` orders by how
+     * many users have added the agent to their own list.
      * @param data The data for the request.
      * @param data.skip
      * @param data.limit
+     * @param data.sort
      * @returns AgentsPublic Successful Response
      * @throws ApiError
      */
@@ -44,8 +46,52 @@ export class AgentsService {
             url: '/api/v1/agents/public',
             query: {
                 skip: data.skip,
+                limit: data.limit,
+                sort: data.sort
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read Added Public Agents
+     * Retrieve all public agents added by the current user.
+     * @param data The data for the request.
+     * @param data.skip
+     * @param data.limit
+     * @returns AgentsPublic Successful Response
+     * @throws ApiError
+     */
+    public static readAddedPublicAgents(data: AgentsReadAddedPublicAgentsData = {}): CancelablePromise<AgentsReadAddedPublicAgentsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/agents/added-public',
+            query: {
+                skip: data.skip,
                 limit: data.limit
             },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Add Public Agent
+     * Add a public agent to the current user's list of added public agents.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static addPublicAgent(data: AgentsAddPublicAgentData): CancelablePromise<AgentsAddPublicAgentResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/agents/added-public',
+            body: data.requestBody,
+            mediaType: 'application/json',
             errors: {
                 422: 'Validation Error'
             }
@@ -293,6 +339,27 @@ export class AgentsService {
             url: '/api/v1/agents/{agent_id}/skills/{skill_name}',
             path: {
                 skill_name: data.skillName,
+                agent_id: data.agentId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Remove Public Agent
+     * Remove a public agent from the current user's list of added public agents.
+     * @param data The data for the request.
+     * @param data.agentId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static removePublicAgent(data: AgentsRemovePublicAgentData): CancelablePromise<AgentsRemovePublicAgentResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/agents/added-public/{agent_id}',
+            path: {
                 agent_id: data.agentId
             },
             errors: {

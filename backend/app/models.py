@@ -13,6 +13,15 @@ from typing import Literal
 def get_datetime_utc() -> datetime:
     return datetime.now(timezone.utc)
 
+class UserPublicAgentsLink(SQLModel, table=True):
+    agent_id: str = Field(
+        foreign_key="agent.id", nullable=False, primary_key=True
+    )
+    user_id: uuid.UUID = Field(
+        foreign_key="user.id", nullable=False, primary_key=True
+    )
+
+# -------------------------------------------------------------------------------------
 
 # Shared properties
 class UserBase(SQLModel):
@@ -38,11 +47,9 @@ class UserUpdate(UserBase):
     email: EmailStr | None = Field(default=None, max_length=255)  # type: ignore[assignment]
     password: str | None = Field(default=None, min_length=8, max_length=128)
 
-
 class UserUpdateMe(SQLModel):
     full_name: str | None = Field(default=None, max_length=255)
     email: EmailStr | None = Field(default=None, max_length=255)
-
 
 class UpdatePassword(SQLModel):
     current_password: str = Field(min_length=8, max_length=128)
@@ -58,18 +65,18 @@ class User(UserBase, table=True):
         sa_type=DateTime(timezone=True),  # type: ignore
     )
     agents: list["Agent"] = Relationship(back_populates="owner", cascade_delete=True)
-
+    added_public_agents: list["Agent"] = Relationship(
+        back_populates="added_by_users", link_model=UserPublicAgentsLink
+    )
 
 # Properties to return via API, id is always required
 class UserPublic(UserBase):
     id: uuid.UUID
     created_at: datetime | None = None
 
-
 class UsersPublic(SQLModel):
     data: list[UserPublic]
     count: int
-
 
 # -------------------------------------------------------------------------------------
 
@@ -109,6 +116,9 @@ class Agent(AgentBase, table=True):
     )
     owner: Mapped[User] = Relationship(back_populates="agents")
     skill_files: list[str] = Field(default=[], sa_column=Column(JSON))
+    added_by_users: list[User] = Relationship(
+        back_populates="added_public_agents", link_model=UserPublicAgentsLink
+    )
 
 
 # Properties to return via API, id is always required
@@ -122,6 +132,10 @@ class AgentPublic(AgentBase):
     tools_config: list[str] | None = None
     is_public: bool = False
     can_edit: bool = False
+    # Only populated by the public-agent listing endpoints (marketplace).
+    added_count: int | None = None
+    is_added: bool = False
+    is_owner: bool = False
 
 
 class AgentsPublic(SQLModel):
@@ -177,6 +191,8 @@ class ThreadWithAgentPublic(ThreadPublic):
 class RecentThreadsPublic(SQLModel):
     data: list[ThreadWithAgentPublic]
     count: int
+
+# -------------------------------------------------------------------------------------
 
 class ChatRequest(SQLModel):
     message: str
