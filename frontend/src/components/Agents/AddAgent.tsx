@@ -6,6 +6,15 @@ import { useForm } from "react-hook-form"
 import { z } from "zod"
 
 import { AgentsService, UtilsService } from "@/client"
+import {
+  ALLOWED_IMAGE_TYPES,
+  ALLOWED_SKILL_EXTENSIONS,
+  fileExtension,
+  formatFileSize,
+  MAX_IMAGE_SIZE,
+  MAX_SKILL_FILE_SIZE,
+  toSkillName,
+} from "@/components/Agents/agentFiles"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -53,30 +62,6 @@ type FormData = z.infer<typeof formSchema>
 
 interface AddAgentProps {
   variant?: "default" | "hero"
-}
-
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif"]
-
-const MAX_SKILL_FILE_SIZE = 2 * 1024 * 1024
-const ALLOWED_SKILL_EXTENSIONS = [".md", ".txt", ".pdf", ".docx"]
-
-function fileExtension(fileName: string) {
-  const parts = fileName.split(".")
-  return parts.length > 1 ? `.${parts.pop()?.toLowerCase()}` : ""
-}
-
-function toSkillName(fileName: string) {
-  return fileName
-    .replace(/\.[^./]+$/, "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-}
-
-function formatFileSize(bytes: number) {
-  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 const AddAgent = ({ variant = "default" }: AddAgentProps) => {
@@ -301,7 +286,12 @@ const AddAgent = ({ variant = "default" }: AddAgentProps) => {
                         Name <span className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
-                        <Input placeholder="Name" type="text" {...field} required />
+                        <Input
+                          placeholder="Name"
+                          type="text"
+                          {...field}
+                          required
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -314,7 +304,8 @@ const AddAgent = ({ variant = "default" }: AddAgentProps) => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>
-                        System Prompt <span className="text-destructive">*</span>
+                        System Prompt{" "}
+                        <span className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
                         <ExpandingInput
@@ -385,12 +376,18 @@ const AddAgent = ({ variant = "default" }: AddAgentProps) => {
                         {selectedTools.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 pt-1">
                             {selectedTools.map((tool) => (
-                              <Badge key={tool} variant="secondary" className="gap-1 pr-1">
+                              <Badge
+                                key={tool}
+                                variant="secondary"
+                                className="gap-1 pr-1"
+                              >
                                 {tool}
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    field.onChange(selectedTools.filter((t) => t !== tool))
+                                    field.onChange(
+                                      selectedTools.filter((t) => t !== tool),
+                                    )
                                   }
                                   className="rounded-full hover:bg-muted-foreground/20"
                                 >
@@ -414,7 +411,10 @@ const AddAgent = ({ variant = "default" }: AddAgentProps) => {
                   render={({ field }) => (
                     <FormItem className="flex items-center gap-3 space-y-0 h-full pt-6">
                       <FormControl>
-                        <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                        <Checkbox
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
                       </FormControl>
                       <FormLabel className="font-normal m-0 pb-1">
                         Make this agent public

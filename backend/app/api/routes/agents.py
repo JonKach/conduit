@@ -114,12 +114,15 @@ async def read_public_agents(
 
 
 @router.get("/{agent_id}", response_model=AgentPublic)
-async def read_agent(agent: AllowedAgent) -> Any:
+async def read_agent(agent: AllowedAgent, current_user: CurrentUser) -> Any:
     """
     Get agent by ID.
     """
     user = agent.owner.full_name
-    agent_public = AgentPublic.model_validate(agent, update={"owner_name": user})
+    can_edit = current_user.is_superuser or agent.owner_id == current_user.id
+    agent_public = AgentPublic.model_validate(
+        agent, update={"owner_name": user, "can_edit": can_edit}
+    )
     return agent_public
 
 @router.get("/{agent_id}/profile-picture")
@@ -165,7 +168,7 @@ async def upload_skill(
     skill_name: Annotated[str, Form()], session: SessionDep, content_length: Annotated[int, Header()]
 ) -> Message:
 
-    if not current_user.is_superuser and agent.owner_id != current_user:
+    if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(403, "Only the agent creator can upload skill files.")
 
     MAX_SKILL_FILE_SIZE = 1024 * 1024 * 2  # 2 MB
@@ -212,7 +215,7 @@ async def upload_profile_picture(
     agent: AllowedAgent, current_user: CurrentUser, file: UploadFile, request: Request,
     content_length: Annotated[int, Header()]
 ) -> Message:
-    if not current_user.is_superuser and agent.owner_id != current_user:
+    if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(403, "Only the agent creator can upload profile pictures.")
 
     MAX_IMAGE_FILE_SIZE = 1024 * 1024 * 5  # 5 MB
@@ -255,14 +258,28 @@ async def get_skill_content(agent: AllowedAgent, skill_name: str, request: Reque
 async def update_agent(
     *,
     session: SessionDep,
+    current_user: CurrentUser,
     agent: AllowedAgent,
     agent_in: AgentUpdate,
 ) -> Any:
     """
     Update an agent.
     """
+    # AllowedAgent only guarantees READ access (which public agents grant to
+    # everyone) -- writes need their own ownership check.
+    if not current_user.is_superuser and agent.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
 
     update_dict = agent_in.model_dump(exclude_unset=True)
+    if (
+        not current_user.is_superuser
+        and agent.is_public
+        and update_dict.get("is_public") is False
+    ):
+        raise HTTPException(
+            status_code=403, detail="Cannot unpublish a public agent manually. Contact support."
+        )
+
     agent.sqlmodel_update(update_dict)
     session.add(agent)
     await session.commit()
@@ -297,10 +314,15 @@ async def delete_agent(
     return Message(message="Agent deleted successfully")
 
 @router.delete("/{agent_id}/skills/{skill_name}")
-async def delete_skill(agent: AllowedAgent, skill_name: str, session: SessionDep, request: Request) -> Message:
+async def delete_skill(
+    agent: AllowedAgent, current_user: CurrentUser, skill_name: str, session: SessionDep, request: Request
+) -> Message:
     """
     Delete a skill from an agent.
     """
+    if not current_user.is_superuser and agent.owner_id != current_user.id:
+        raise HTTPException(403, "Only the agent creator can delete skill files.")
+
     agent.sqlmodel_update({"skill_files": [s for s in agent.skill_files if s != skill_name]})
     await session.commit()
     await session.refresh(agent)
@@ -315,7 +337,7 @@ async def delete_profile_picture(agent: AllowedAgent, current_user: CurrentUser,
     """
     Delete the profile picture of an agent.
     """
-    if not current_user.is_superuser and agent.owner_id != current_user:
+    if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(403, "Only the agent creator can delete profile pictures.")
 
     storage = request.app.state.gcs_storage

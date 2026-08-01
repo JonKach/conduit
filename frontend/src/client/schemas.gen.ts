@@ -116,6 +116,11 @@ export const AgentPublicSchema = {
                 }
             ],
             title: 'Owner Name'
+        },
+        can_edit: {
+            type: 'boolean',
+            title: 'Can Edit',
+            default: false
         }
     },
     type: 'object',

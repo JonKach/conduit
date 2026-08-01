@@ -17,6 +17,7 @@ export type AgentPublic = {
     id: string;
     created_at?: (string | null);
     owner_name?: (string | null);
+    can_edit?: boolean;
 };
 
 export type AgentsPublic = {

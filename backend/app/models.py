@@ -121,6 +121,7 @@ class AgentPublic(AgentBase):
     system_prompt: str | None = None
     tools_config: list[str] | None = None
     is_public: bool = False
+    can_edit: bool = False
 
 
 class AgentsPublic(SQLModel):

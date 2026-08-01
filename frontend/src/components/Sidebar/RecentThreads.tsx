@@ -60,7 +60,9 @@ export function RecentThreads() {
                         onClick={handleMenuClick}
                       >
                         <MessageSquare />
-                        <span className="truncate">{thread.name}</span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {thread.name}
+                        </span>
                       </RouterLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

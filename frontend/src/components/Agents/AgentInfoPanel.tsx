@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { Bot, FileText, Globe, Lock, Wrench } from "lucide-react"
 
-import { AgentsService, type AgentPublic } from "@/client"
+import { type AgentPublic, AgentsService } from "@/client"
+import AgentActionsMenu from "@/components/Agents/AgentActionsMenu"
 import AgentInfoSection from "@/components/Agents/AgentInfoSection"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -56,6 +57,11 @@ const AgentInfoPanel = ({ agent }: AgentInfoPanelProps) => {
               {agent.is_public ? "Public" : "Private"}
             </Badge>
           </div>
+          {agent.owner_name ? (
+            <p className="truncate text-xs text-muted-foreground">
+              by {agent.owner_name}
+            </p>
+          ) : null}
           <p
             className={
               agent.description
@@ -66,6 +72,7 @@ const AgentInfoPanel = ({ agent }: AgentInfoPanelProps) => {
             {agent.description || "No description"}
           </p>
         </div>
+        {agent.can_edit ? <AgentActionsMenu agent={agent} /> : null}
       </div>
 
       <div className="flex flex-col">
