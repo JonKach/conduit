@@ -14,6 +14,7 @@ export interface UserTurn {
   id: string
   role: "user"
   text: string
+  files?: string[]
 }
 
 export interface AssistantTurn {
@@ -51,6 +52,57 @@ export interface HistoryMessage {
   usage?: UsageInfo | null
 }
 
+// Matches the marker `build_user_message` (backend/app/gcs_backend.py, reference
+// mode) appends to a user turn's text. Two sections can appear — "Available
+// Files" (everything in the thread, re-listed every turn, for the model's
+// benefit) and "Attached Files" (only what THIS message attached). Only the
+// latter should ever turn into a glyph.
+const PROMPT_DATA_MARKER = "%%PROMPT_DATA%%"
+const ATTACHED_FILES_HEADER = "Attached Files:"
+
+/**
+ * Strip the `%%PROMPT_DATA%%` marker sections off a message's raw content,
+ * returning the human-authored text plus the paths listed under "Attached
+ * Files:" (normalized to match what the upload endpoint returns, e.g.
+ * "/invoice.pdf" — no leading "/media").
+ */
+export function splitPromptData(raw: string): {
+  text: string
+  files: string[]
+} {
+  const markerIndex = raw.indexOf(PROMPT_DATA_MARKER)
+  if (markerIndex === -1) return { text: raw, files: [] }
+
+  const text = raw.slice(0, markerIndex).trimEnd()
+  const sections = raw
+    .slice(markerIndex)
+    .split(PROMPT_DATA_MARKER)
+    .filter((section) => section.length > 0)
+  const attachedSection = sections.find((section) =>
+    section.startsWith(ATTACHED_FILES_HEADER),
+  )
+  if (!attachedSection) return { text, files: [] }
+
+  const files = attachedSection
+    .slice(ATTACHED_FILES_HEADER.length)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) =>
+      line
+        .slice(2)
+        .trim()
+        .replace(/^\/media/, ""),
+    )
+
+  return { text, files }
+}
+
+/** Strip the agent-visible "/media/" mount prefix and any leading slash. */
+export function fileNameFromPath(path: string): string {
+  return path.replace(/^\/media\//, "").replace(/^\//, "")
+}
+
 /**
  * The backend replays checkpointed messages as flat human/ai/tool entries
  * with no id linking a tool call to the assistant turn that made it, so
@@ -61,10 +113,12 @@ export function seedTurnsFromHistory(messages: HistoryMessage[]): ChatTurn[] {
   const turns: ChatTurn[] = []
   for (const [index, message] of messages.entries()) {
     if (message.type === "human") {
+      const { text, files } = splitPromptData(extractText(message.content))
       turns.push({
         id: `history-${index}`,
         role: "user",
-        text: extractText(message.content),
+        text,
+        files: files.length > 0 ? files : undefined,
       })
     } else if (message.type === "ai") {
       turns.push({

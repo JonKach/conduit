@@ -1,8 +1,15 @@
-import { Bot, Wrench } from "lucide-react"
+import { Bot, Paperclip, Wrench } from "lucide-react"
 
 import type { AgentPublic } from "@/client"
+import { type ChatTurn, fileNameFromPath } from "@/components/Chat/chatTurns"
 import Markdown from "@/components/Chat/Markdown"
-import type { ChatTurn } from "@/components/Chat/chatTurns"
+import {
+  Attachment,
+  AttachmentContent,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
@@ -40,15 +47,36 @@ const ChatTranscript = ({
           <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4 py-6">
             {turns.map((turn) =>
               turn.role === "user" ? (
-                <MessageScrollerItem key={turn.id} messageId={turn.id} scrollAnchor>
+                <MessageScrollerItem
+                  key={turn.id}
+                  messageId={turn.id}
+                  scrollAnchor
+                >
                   <Message align="end">
                     <MessageContent>
-                      {/* Put file upload UI here? */}
-                      <Bubble align="end">
-                        <BubbleContent>
-                          <Markdown content={turn.text} />
-                        </BubbleContent>
-                      </Bubble>
+                      {turn.files && turn.files.length > 0 ? (
+                        <AttachmentGroup>
+                          {turn.files.map((path) => (
+                            <Attachment key={path} size="sm">
+                              <AttachmentMedia>
+                                <Paperclip />
+                              </AttachmentMedia>
+                              <AttachmentContent>
+                                <AttachmentTitle>
+                                  {fileNameFromPath(path)}
+                                </AttachmentTitle>
+                              </AttachmentContent>
+                            </Attachment>
+                          ))}
+                        </AttachmentGroup>
+                      ) : null}
+                      {turn.text ? (
+                        <Bubble align="end">
+                          <BubbleContent>
+                            <Markdown content={turn.text} />
+                          </BubbleContent>
+                        </Bubble>
+                      ) : null}
                     </MessageContent>
                   </Message>
                 </MessageScrollerItem>
@@ -58,7 +86,10 @@ const ChatTranscript = ({
                     <MessageAvatar>
                       <Avatar>
                         {profilePictureLink ? (
-                          <AvatarImage src={profilePictureLink} alt={agent.name} />
+                          <AvatarImage
+                            src={profilePictureLink}
+                            alt={agent.name}
+                          />
                         ) : null}
                         <AvatarFallback className="bg-zinc-600 text-white">
                           {agent.name ? (

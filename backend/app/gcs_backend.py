@@ -443,12 +443,23 @@ async def build_user_message(
 
     if mode == "reference":
         scoped = GCSBackend(storage, bucket, root_prefix=root_prefix, thread_id=thread_id)
-        ls_result = await scoped.als("/")  # list all files for this thread
-        if ls_result.entries:
-            text = text + "\n\nAttached Files:" + "\n".join(
-                f"- /media{entry['path']}" for entry in ls_result.entries
+        ls_result = await scoped.als("/")  # list all files for this thread, re-fetched every turn
+        available_paths = {entry["path"] for entry in ls_result.entries or []}
+        # Only announce as "attached" the paths the caller passed AND that still
+        # exist -- a path staged then deleted before send must never be claimed
+        # as attached, either to the model or to the frontend glyph parser.
+        attached_paths = [p for p in attached_agent_paths if p in available_paths]
+
+        sections = ""
+        if available_paths:
+            sections += "\n\n%%PROMPT_DATA%%Available Files:\n" + "\n".join(
+                f"- /media{path}" for path in sorted(available_paths)
             )
-        return {"role": "user", "content": text}
+        if attached_paths:
+            sections += "\n\n%%PROMPT_DATA%%Attached Files:\n" + "\n".join(
+                f"- /media{path}" for path in attached_paths
+            )
+        return {"role": "user", "content": text + sections}
 
     blocks = await media_blocks_for_paths(
         storage, bucket, thread_id, attached_agent_paths,

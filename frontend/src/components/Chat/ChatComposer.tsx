@@ -1,12 +1,13 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import { Loader2, Paperclip, Send, Square, X } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 
 import { ThreadsService } from "@/client"
+import { fileNameFromPath } from "@/components/Chat/chatTurns"
 import {
   Attachment,
-  AttachmentActions,
   AttachmentAction,
+  AttachmentActions,
   AttachmentContent,
   AttachmentDescription,
   AttachmentGroup,
@@ -21,10 +22,6 @@ interface StagedFile {
   path: string
   name: string
   state: "uploading" | "done" | "error"
-}
-
-function fileNameFromPath(path: string) {
-  return path.replace(/^\//, "")
 }
 
 interface ChatComposerProps {
@@ -43,36 +40,18 @@ const ChatComposer = ({
   onStop,
 }: ChatComposerProps) => {
   const [text, setText] = useState("")
+  // Only files uploaded in THIS composer session — never seeded from thread
+  // history. Previously-uploaded files live in the ThreadFilesDialog instead;
+  // reopening a thread must not look like a dozen files are staged to resend.
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const queryClient = useQueryClient()
   const { showErrorToast } = useCustomToast()
 
-  const { data: existingFiles } = useQuery({
-    queryKey: ["threadFiles", agentId, threadId],
-    queryFn: async () => {
-      const res = (await ThreadsService.listFiles({ agentId, threadId })) as {
-        files: string[]
-      }
-      return res.files
-    },
-  })
-
-  useEffect(() => {
-    if (!existingFiles) return
-    setStagedFiles((prev) => {
-      const known = new Set(prev.map((f) => f.path))
-      const additions = existingFiles
-        .filter((path) => !known.has(path))
-        .map((path) => ({
-          path,
-          name: fileNameFromPath(path),
-          state: "done" as const,
-        }))
-      return additions.length > 0 ? [...prev, ...additions] : prev
+  const invalidateThreadFiles = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["threadFiles", agentId, threadId],
     })
-    // Only seed once when the query first resolves.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existingFiles])
 
   const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -95,10 +74,13 @@ const ChatComposer = ({
 
         setStagedFiles((prev) =>
           prev.map((f) =>
-            f.path === placeholder.path ? { path, name: file.name, state: "done" } : f,
+            f.path === placeholder.path
+              ? { path, name: file.name, state: "done" }
+              : f,
           ),
         )
-      } catch (err) {
+        invalidateThreadFiles()
+      } catch (_err) {
         setStagedFiles((prev) =>
           prev.map((f) =>
             f.path === placeholder.path ? { ...f, state: "error" } : f,
@@ -120,6 +102,8 @@ const ChatComposer = ({
         })
       } catch {
         // File may already be gone; nothing actionable for the user here.
+      } finally {
+        invalidateThreadFiles()
       }
     }
   }
@@ -205,7 +189,12 @@ const ChatComposer = ({
             className="max-h-48"
           />
           {isStreaming ? (
-            <Button type="button" variant="secondary" size="icon" onClick={onStop}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              onClick={onStop}
+            >
               <Square className="fill-current" />
             </Button>
           ) : (

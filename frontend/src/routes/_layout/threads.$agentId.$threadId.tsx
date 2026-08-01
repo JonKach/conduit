@@ -1,25 +1,33 @@
-import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query"
+import {
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { ArrowLeft, Bot } from "lucide-react"
 import { Suspense, useCallback, useRef, useState } from "react"
 
 import {
-  AgentsService,
   type AgentPublic,
-  ThreadsService,
+  AgentsService,
   type ThreadContentPublic,
+  ThreadsService,
 } from "@/client"
+import ThreadActionsMenu from "@/components/Agents/ThreadActionsMenu"
 import ChatComposer from "@/components/Chat/ChatComposer"
 import ChatTranscript from "@/components/Chat/ChatTranscript"
 import {
-  seedTurnsFromHistory,
   type ChatTurn,
   type HistoryMessage,
+  seedTurnsFromHistory,
 } from "@/components/Chat/chatTurns"
-import ThreadActionsMenu from "@/components/Agents/ThreadActionsMenu"
+import ThreadFilesDialog from "@/components/Chat/ThreadFilesDialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useThreadStream, type ThreadStreamEvent } from "@/hooks/useThreadStream"
+import {
+  type ThreadStreamEvent,
+  useThreadStream,
+} from "@/hooks/useThreadStream"
 import { getInitials } from "@/utils"
 
 // No model-selection UI exists yet; the agent worker just needs some model id.
@@ -73,6 +81,7 @@ function ChatHeader({
         <p className="truncate text-sm font-medium">{thread.name}</p>
         <p className="truncate text-xs text-muted-foreground">{agent.name}</p>
       </div>
+      <ThreadFilesDialog agentId={agent.id} threadId={thread.id} />
       <ThreadActionsMenu thread={thread} />
     </div>
   )
@@ -93,7 +102,13 @@ function ChatPageSkeleton() {
   )
 }
 
-function ChatPageContent({ agentId, threadId }: { agentId: string; threadId: string }) {
+function ChatPageContent({
+  agentId,
+  threadId,
+}: {
+  agentId: string
+  threadId: string
+}) {
   const { data: agent } = useAgentQuery(agentId)
   const { data: thread } = useThreadQuery(agentId, threadId)
   const queryClient = useQueryClient()
@@ -113,7 +128,11 @@ function ChatPageContent({ agentId, threadId }: { agentId: string; threadId: str
   const activeAssistantId = useRef<string | null>(null)
 
   const updateAssistant = useCallback(
-    (update: (turn: Extract<ChatTurn, { role: "assistant" }>) => Extract<ChatTurn, { role: "assistant" }>) => {
+    (
+      update: (
+        turn: Extract<ChatTurn, { role: "assistant" }>,
+      ) => Extract<ChatTurn, { role: "assistant" }>,
+    ) => {
       setTurns((prev) =>
         prev.map((turn) =>
           turn.role === "assistant" && turn.id === activeAssistantId.current
@@ -147,7 +166,11 @@ function ChatPageContent({ agentId, threadId }: { agentId: string; threadId: str
               ...turn,
               toolCalls: [
                 ...turn.toolCalls,
-                { id: event.id, name: parsed.tool_name, input: JSON.stringify(parsed.tool_input) },
+                {
+                  id: event.id,
+                  name: parsed.tool_name,
+                  input: JSON.stringify(parsed.tool_input),
+                },
               ],
             }))
           } catch {
@@ -179,7 +202,14 @@ function ChatPageContent({ agentId, threadId }: { agentId: string; threadId: str
             updateAssistant((turn) => ({ ...turn, status: "done" }))
           }
           queryClient.invalidateQueries({ queryKey: ["recentThreads"] })
-          queryClient.invalidateQueries({ queryKey: ["thread", agentId, threadId] })
+          queryClient.invalidateQueries({
+            queryKey: ["thread", agentId, threadId],
+          })
+          // The agent can write into /media/ mid-run, so the files panel
+          // needs to pick up anything it added too.
+          queryClient.invalidateQueries({
+            queryKey: ["threadFiles", agentId, threadId],
+          })
           activeAssistantId.current = null
           break
         }
@@ -208,7 +238,12 @@ function ChatPageContent({ agentId, threadId }: { agentId: string; threadId: str
 
     setTurns((prev) => [
       ...prev,
-      { id: `user-${Date.now()}`, role: "user", text: message },
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        text: message,
+        files: attachedFiles.length > 0 ? attachedFiles : undefined,
+      },
       {
         id: assistantId,
         role: "assistant",
@@ -228,14 +263,20 @@ function ChatPageContent({ agentId, threadId }: { agentId: string; threadId: str
   }
 
   const handleStop = () => {
-    ThreadsService.stopStreamThreadConversation({ agentId, threadId }).catch(() => {
-      // If the thread already finished, the backend 400s — nothing to do.
-    })
+    ThreadsService.stopStreamThreadConversation({ agentId, threadId }).catch(
+      () => {
+        // If the thread already finished, the backend 400s — nothing to do.
+      },
+    )
   }
 
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col overflow-hidden rounded-xl border">
-      <ChatHeader agent={agent} thread={thread} profilePictureLink={profilePictureLink} />
+      <ChatHeader
+        agent={agent}
+        thread={thread}
+        profilePictureLink={profilePictureLink}
+      />
       <ChatTranscript
         turns={turns}
         agent={agent}
@@ -252,7 +293,13 @@ function ChatPageContent({ agentId, threadId }: { agentId: string; threadId: str
   )
 }
 
-function ChatPage({ agentId, threadId }: { agentId: string; threadId: string }) {
+function ChatPage({
+  agentId,
+  threadId,
+}: {
+  agentId: string
+  threadId: string
+}) {
   return (
     <Suspense fallback={<ChatPageSkeleton />}>
       <ChatPageContent agentId={agentId} threadId={threadId} />
