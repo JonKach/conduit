@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 291 44" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+    <g transform="matrix(1,0,0,1,-886.741274,-759.271448)">
+        <g transform="matrix(0.132045,-0.132045,0.132045,0.132045,661.473283,805.751128)">
+            <g transform="matrix(1,0,0,1,316.5,416.5)">
+                <rect x="631" y="342" width="163" height="52" style="fill:rgb(21,84,227);"/>
+            </g>
+            <g transform="matrix(0.889571,0,0,0.889571,447.180982,512.638037)">
+                <rect x="631" y="342" width="163" height="52" style="fill:rgb(21,84,227);"/>
+            </g>
+            <g transform="matrix(0,0.964771,-0.889571,0,1467.361963,208.100681)">
+                <path d="M678.947,394L678.947,515.824L631,515.824L631,342L794,342L794,515.824L746.053,515.824L746.053,394L678.947,394Z" style="fill:rgb(21,84,227);"/>
+            </g>
+            <g transform="matrix(0.889571,0,0,0.889571,447.180982,623.638037)">
+                <rect x="631" y="342" width="163" height="52" style="fill:rgb(21,84,227);"/>
+            </g>
+            <g transform="matrix(1,0,0,1,316.5,527.5)">
+                <rect x="631" y="342" width="163" height="52" style="fill:rgb(21,84,227);"/>
+            </g>
+            <g transform="matrix(0,1,-1,0,1341.5,127.5)">
+                <rect x="631" y="342" width="163" height="52" style="fill:rgb(21,84,227);"/>
+            </g>
+        </g>
+        <g transform="matrix(1,0,0,1,111.503906,247.812196)">
+            <text x="838.37px" y="548.544px" style="font-family:'Helvetica-Bold', 'Helvetica';font-weight:700;font-size:50px;fill:rgb(21,84,227);">CONDUIT</text>
+        </g>
+    </g>
+</svg>
