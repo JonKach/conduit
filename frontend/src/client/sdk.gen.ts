@@ -283,6 +283,13 @@ export class AgentsService {
     /**
      * Get Skill Names
      * Get all skill names for an agent.
+     *
+     * Returns bare names (e.g. "research"), stripping the "/SKILL.md" suffix
+     * the DB stores internally, so the value round-trips cleanly through
+     * get_skill_content/delete_skill, which both take a single-segment
+     * {skill_name} path param - passing the suffixed form back in previously
+     * 404'd on both routes (a literal "/" landing in a single URL segment) and
+     * orphaned the skill's content in the store on delete.
      * @param data The data for the request.
      * @param data.agentId
      * @returns unknown Successful Response
@@ -469,7 +476,7 @@ export class LoginService {
 export class PrivateService {
     /**
      * Create User
-     * Create a new user.
+     * Create a new, unauthenticated user - dev-only, never for production use.
      * @param data The data for the request.
      * @param data.requestBody
      * @returns UserPublic Successful Response
@@ -692,6 +699,13 @@ export class ThreadsService {
     /**
      * Delete File
      * Delete a file from a thread's media store.
+     *
+     * ``{file_path:path}`` (not a plain string segment) so nested paths a
+     * thread might contain (e.g. "/reports/q1.pdf" from list_files) are
+     * actually reachable - previously any `/` in the path meant the route
+     * never matched at all. Deletion goes through GCSBackend.adelete(), which
+     * sanitizes the path the same way every read/write does, instead of
+     * hand-concatenating the object key here.
      * @param data The data for the request.
      * @param data.filePath
      * @param data.threadId
@@ -964,7 +978,8 @@ export class UsersService {
 export class UtilsService {
     /**
      * Get Tools
-     * Get available tools.
+     * Get available tools. Its only frontend callers (EditAgent, AddAgent) are
+     * both behind the authenticated app shell, so this never needed to be public.
      * @returns string Successful Response
      * @throws ApiError
      */

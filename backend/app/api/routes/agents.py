@@ -1,4 +1,5 @@
 import io
+import re
 import stat
 import uuid
 from ast import Pass
@@ -239,6 +240,27 @@ ALLOWED_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 }
 
+MAX_SKILL_NAME_LENGTH = 100
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def _validate_skill_name(skill_name: str) -> str:
+    """Reject anything that isn't a plain, single-segment name.
+
+    ``skill_name`` becomes both a Postgres store key segment and a URL path
+    segment (GET/DELETE .../skills/{skill_name}), so it must never contain a
+    path separator or a traversal segment - the frontend already slugifies
+    via toSkillName(), but the server must not trust client-side sanitization.
+    """
+    name = skill_name.strip()
+    if not name or len(name) > MAX_SKILL_NAME_LENGTH or not _SKILL_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid skill name. Use letters, numbers, '-', '_', or '.' only.",
+        )
+    return name
+
+
 @router.post("/{agent_id}/skills")
 async def upload_skill(
     agent: AllowedAgent, current_user: CurrentUser, file: UploadFile, request: Request,
@@ -247,6 +269,11 @@ async def upload_skill(
 
     if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(403, "Only the agent creator can upload skill files.")
+
+    skill_name = _validate_skill_name(skill_name)
+    skill_entry = f"{skill_name}/SKILL.md"
+    if skill_entry in agent.skill_files:
+        raise HTTPException(status_code=409, detail="A skill with this name already exists.")
 
     MAX_SKILL_FILE_SIZE = 1024 * 1024 * 2  # 2 MB
     if content_length > MAX_SKILL_FILE_SIZE or (file.size or 0) > MAX_SKILL_FILE_SIZE:
@@ -265,26 +292,23 @@ async def upload_skill(
 
     try:
         if mime_type == "text/plain" or mime_type == "text/markdown":
-            text_content = contents.decode("utf-8")   
+            text_content = contents.decode("utf-8")
         elif mime_type == "application/pdf":
             with io.BytesIO(contents) as open_pdf:
                 reader = PdfReader(open_pdf)
-                text_content = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])     
-        elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                text_content = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        else:  # application/vnd.openxmlformats-officedocument.wordprocessingml.document
             with io.BytesIO(contents) as open_docx:
                 doc = Document(open_docx)
                 text_content = "\n".join([para.text for para in doc.paragraphs])
-        else:
-            raise HTTPException(400, "Invalid file type.")
-
-        await store.aput((agent.id,), f"/{skill_name}/SKILL.md", value={"content": text_content, "encoding": "utf-8"})
-
-        agent.sqlmodel_update({"skill_files": agent.skill_files + [f"{skill_name}/SKILL.md"]})
-        await session.commit()
-        await session.refresh(agent)
-
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error parsing file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error parsing file: {str(e)}")
+
+    await store.aput((agent.id,), f"/{skill_entry}", value={"content": text_content, "encoding": "utf-8"})
+
+    agent.sqlmodel_update({"skill_files": agent.skill_files + [skill_entry]})
+    await session.commit()
+    await session.refresh(agent)
     return Message(message="Skill uploaded successfully!")
 
 @router.post("/{agent_id}/profile-picture") #This also acts as the update profile endpoint
@@ -317,8 +341,17 @@ async def upload_profile_picture(
 async def get_skill_names(agent: AllowedAgent) -> Any:
     """
     Get all skill names for an agent.
+
+    Returns bare names (e.g. "research"), stripping the "/SKILL.md" suffix
+    the DB stores internally, so the value round-trips cleanly through
+    get_skill_content/delete_skill, which both take a single-segment
+    {skill_name} path param - passing the suffixed form back in previously
+    404'd on both routes (a literal "/" landing in a single URL segment) and
+    orphaned the skill's content in the store on delete.
     """
-    return {"skill_names": agent.skill_files}
+    return {
+        "skill_names": [name.removesuffix("/SKILL.md") for name in agent.skill_files]
+    }
 
 @router.get("/{agent_id}/skills/{skill_name}")
 async def get_skill_content(agent: AllowedAgent, skill_name: str, request: Request) -> Any:
@@ -329,7 +362,7 @@ async def get_skill_content(agent: AllowedAgent, skill_name: str, request: Reque
     content = await store.aget((agent.id,), f"/{skill_name}/SKILL.md")
     if not content:
         raise HTTPException(status_code=404, detail="Skill not found")
-    return content
+    return {"skill_name": skill_name, "content": content.value.get("content", "")}
 
 @router.put("/{agent_id}", response_model=AgentPublic)
 async def update_agent(
@@ -420,12 +453,15 @@ async def delete_skill(
     if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(403, "Only the agent creator can delete skill files.")
 
-    agent.sqlmodel_update({"skill_files": [s for s in agent.skill_files if s != skill_name]})
+    # skill_name arrives bare (see get_skill_names); agent.skill_files stores
+    # the "{name}/SKILL.md" form, so the filter must reconstruct it to match.
+    skill_entry = f"{skill_name}/SKILL.md"
+    agent.sqlmodel_update({"skill_files": [s for s in agent.skill_files if s != skill_entry]})
     await session.commit()
     await session.refresh(agent)
 
     store = AsyncPostgresStore(request.app.state.connection_pool)
-    await store.adelete((agent.id,), f"/{skill_name}/SKILL.md")
+    await store.adelete((agent.id,), f"/{skill_entry}")
 
     return Message(message="Skill deleted successfully")
 

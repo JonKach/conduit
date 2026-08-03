@@ -4,11 +4,14 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi_limiter.depends import RateLimiter
+from fastapi_limiter.identifier import default_identifier
 
 from app import crud
 from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
 from app.core import security
 from app.core.config import settings
+from app.core.security import auth_bucket, general_bucket, recovery_bucket
 from app.models import Message, NewPassword, Token, UserPublic, UserUpdate
 from app.utils import (
     generate_password_reset_token,
@@ -20,7 +23,10 @@ from app.utils import (
 router = APIRouter(tags=["login"])
 
 
-@router.post("/login/access-token")
+@router.post(
+    "/login/access-token",
+    dependencies=[Depends(RateLimiter(auth_bucket, identifier=default_identifier))],
+)
 async def login_access_token(
     session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
 ) -> Token:
@@ -30,7 +36,6 @@ async def login_access_token(
     user = await crud.authenticate(
         session=session, email=form_data.username, password=form_data.password
     )
-    print("Authenticated user:", user)
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect email or password")
     elif not user.is_active:
@@ -43,7 +48,11 @@ async def login_access_token(
     )
 
 
-@router.post("/login/test-token", response_model=UserPublic)
+@router.post(
+    "/login/test-token",
+    response_model=UserPublic,
+    dependencies=[Depends(RateLimiter(general_bucket, identifier=default_identifier))],
+)
 async def test_token(current_user: CurrentUser) -> Any:
     """
     Test access token
@@ -51,7 +60,10 @@ async def test_token(current_user: CurrentUser) -> Any:
     return current_user
 
 
-@router.post("/password-recovery/{email}")
+@router.post(
+    "/password-recovery/{email}",
+    dependencies=[Depends(RateLimiter(recovery_bucket, identifier=default_identifier))],
+)
 async def recover_password(email: str, session: SessionDep) -> Message:
     """
     Password Recovery
@@ -75,7 +87,10 @@ async def recover_password(email: str, session: SessionDep) -> Message:
     )
 
 
-@router.post("/reset-password/")
+@router.post(
+    "/reset-password/",
+    dependencies=[Depends(RateLimiter(recovery_bucket, identifier=default_identifier))],
+)
 async def reset_password(session: SessionDep, body: NewPassword) -> Message:
     """
     Reset password
@@ -100,7 +115,10 @@ async def reset_password(session: SessionDep, body: NewPassword) -> Message:
 
 @router.post(
     "/password-recovery-html-content/{email}",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[
+        Depends(get_current_active_superuser),
+        Depends(RateLimiter(general_bucket, identifier=default_identifier)),
+    ],
     response_class=HTMLResponse,
 )
 async def recover_password_html_content(email: str, session: SessionDep) -> Any:

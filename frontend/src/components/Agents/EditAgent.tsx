@@ -22,6 +22,7 @@ import {
   MAX_SKILL_FILE_SIZE,
   toSkillName,
 } from "@/components/Agents/agentFiles"
+import ViewSkillDialog from "@/components/Agents/ViewSkillDialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -227,9 +228,11 @@ const EditAgent = ({ agent, open, onOpenChange }: EditAgentProps) => {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ""
 
+    // skillNames are bare names now (get_skill_names strips "/SKILL.md"
+    // server-side), so the duplicate check must compare bare names too.
     const existingNames = new Set(skillNames ?? [])
     for (const file of files) {
-      if (existingNames.has(`${toSkillName(file.name)}/SKILL.md`)) {
+      if (existingNames.has(toSkillName(file.name))) {
         showErrorToast(`${file.name}: a skill with that name already exists.`)
         continue
       }
@@ -508,19 +511,27 @@ const EditAgent = ({ agent, open, onOpenChange }: EditAgentProps) => {
                               <FileText className="size-4 shrink-0 text-muted-foreground" />
                               <span className="truncate">{skill}</span>
                             </div>
-                            <button
-                              type="button"
-                              disabled={isDeleting}
-                              onClick={() => deleteSkillMutation.mutate(skill)}
-                              className="shrink-0 rounded-full p-0.5 hover:bg-muted-foreground/20"
-                            >
-                              {isDeleting ? (
-                                <Loader2 className="size-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="size-3.5" />
-                              )}
-                              <span className="sr-only">Delete {skill}</span>
-                            </button>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <ViewSkillDialog
+                                agentId={agent.id}
+                                skillName={skill}
+                              />
+                              <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() =>
+                                  deleteSkillMutation.mutate(skill)
+                                }
+                                className="shrink-0 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                              >
+                                {isDeleting ? (
+                                  <Loader2 className="size-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="size-3.5" />
+                                )}
+                                <span className="sr-only">Delete {skill}</span>
+                              </button>
+                            </div>
                           </div>
                         )
                       })}

@@ -90,6 +90,26 @@ def _guess_content_type(path: str) -> str:
     return mimetypes.guess_type("file" + PurePosixPath(path).suffix)[0] or "application/octet-stream"
 
 
+def _safe_relative_key(agent_path: str) -> str:
+    """Normalize an agent-supplied path into a safe, thread-relative object key.
+
+    GCS itself has a flat namespace (gcloud-aio percent-encodes object names,
+    so a raw ``..`` can't actually escape the thread prefix on GCS today) —
+    but this backend's ``_key()`` is the single choke point every read/write/
+    delete/signed-URL call goes through, and it previously did nothing but
+    ``lstrip("/")``. Reject traversal/empty segments here so the guarantee
+    holds regardless of storage backend (this code is one config change away
+    from S3, where the same laxness WOULD be a real cross-tenant escape).
+    """
+    candidate = (agent_path or "").replace("\\", "/")
+    if "\x00" in candidate:
+        raise ValueError(f"Unsafe path: {agent_path!r}")
+    parts = PurePosixPath(candidate.lstrip("/")).parts
+    if not parts or any(part in (".", "..") for part in parts):
+        raise ValueError(f"Unsafe path: {agent_path!r}")
+    return "/".join(parts)
+
+
 def _looks_binary(path: str, raw: bytes) -> bool:
     # 1) Extension is authoritative when deepagents recognizes it.
     ftype = _get_file_type(path)            # "text"/"image"/"audio"/"video"/"file"
@@ -156,7 +176,7 @@ class GCSBackend(BackendProtocol):
 
     def _key(self, agent_path: str) -> str:
         """Map an agent path like '/media/cat.png' -> '{root}/{thread}/media/cat.png'."""
-        rel = agent_path.lstrip("/")
+        rel = _safe_relative_key(agent_path)
         return f"{self._root}/{self._thread_id()}/{rel}"
 
     def _prefix(self) -> str:
@@ -301,6 +321,23 @@ class GCSBackend(BackendProtocol):
         """
         await self._awrite_bytes(agent_path, raw, content_type=content_type)
         return agent_path
+
+    async def adelete(self, agent_path: str) -> bool:
+        """Delete a single file from this thread's store.
+
+        Routes through ``_key()`` (hence ``_safe_relative_key``) like every
+        other operation, instead of callers hand-building
+        ``f"{root}/{thread_id}/{file_path}"`` strings themselves — which is
+        how the object-name sanitization used to get bypassed on delete.
+        Returns True if an object was deleted, False if it didn't exist.
+        """
+        try:
+            await self._storage.delete(self._bucket_name, self._key(agent_path))
+        except ClientResponseError as exc:
+            if exc.status == 404:
+                return False
+            raise
+        return True
 
     async def generate_signed_url(
         self,

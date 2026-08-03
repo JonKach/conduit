@@ -54,14 +54,12 @@ DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZm
 
 async def authenticate(*, session: AsyncSession, email: str, password: str) -> User | None:
     db_user = await get_user_by_email(session=session, email=email)
-    print("db_user:", db_user)
     if not db_user:
         # Prevent timing attacks by running password verification even when user doesn't exist
         # This ensures the response time is similar whether or not the email exists
         verify_password(password, DUMMY_HASH)
         return None
     verified, updated_password_hash = verify_password(password, db_user.hashed_password)
-    print("Password verified:", verified)
     if not verified:
         return None
     if updated_password_hash:

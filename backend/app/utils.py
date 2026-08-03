@@ -36,7 +36,16 @@ def send_email(
     subject: str = "",
     html_content: str = "",
 ) -> None:
-    assert settings.emails_enabled, "no provided configuration for email variables"
+    """Best-effort send: a delivery (or configuration) failure is logged and
+    swallowed rather than raised, so callers like password recovery can
+    always return a uniform response regardless of whether the send actually
+    worked - required to not leak account existence via a 500 vs 200 split.
+    """
+    if not settings.emails_enabled:
+        logger.warning(
+            "send_email skipped: no SMTP configuration for email variables"
+        )
+        return
     # Ensure mail_from matches type expected by emails.Message: either a str or (name, email)
     from_name = settings.EMAILS_FROM_NAME
     from_email = settings.EMAILS_FROM_EMAIL or ""
@@ -55,7 +64,11 @@ def send_email(
         smtp_options["user"] = settings.SMTP_USER
     if settings.SMTP_PASSWORD:
         smtp_options["password"] = settings.SMTP_PASSWORD
-    response = message.send(to=email_to, smtp=smtp_options)
+    try:
+        response = message.send(to=email_to, smtp=smtp_options)
+    except Exception:
+        logger.exception("send_email failed to deliver to %s", email_to)
+        return
     logger.info(f"send email result: {response}")
 
 

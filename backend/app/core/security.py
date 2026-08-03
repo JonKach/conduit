@@ -113,3 +113,17 @@ general_bucket = Limiter(
 premium_bucket = Limiter(
     KeyedRedisBucketFactory([Rate(2, Duration.MINUTE)], redis_conn, "api-call-limits")
 )
+
+# Tighter buckets for unauthenticated auth endpoints. Keyed by IP+path (via
+# fastapi_limiter's default_identifier, not user_or_ip_identifier) since there
+# is no user yet and a caller must not be able to use a *different* valid
+# token to dodge one IP's brute-force counter.
+auth_bucket = Limiter(
+    KeyedRedisBucketFactory(
+        [Rate(10, Duration.MINUTE), Rate(60, Duration.HOUR)], redis_conn, "auth-limits"
+    )
+)
+
+recovery_bucket = Limiter(
+    KeyedRedisBucketFactory([Rate(3, Duration.HOUR)], redis_conn, "recovery-limits")
+)

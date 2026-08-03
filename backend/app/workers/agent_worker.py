@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 import json
-import traceback
+import logging
 from typing import Any, Literal, cast
 import io
 
@@ -33,6 +33,8 @@ from gcloud.aio.storage import Storage
 from langgraph.types import Command
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_JOBS = 20
 tavily_client = TavilyClient(api_key=settings.TAVILY_API_KEY)
@@ -76,8 +78,22 @@ async def web_search(
         )
     )
 
-async def execute_agent(redis_client, checkpointer, store, gcs_storage, job):
-    job = AgentJob.model_validate(job)
+async def execute_agent(redis_client, checkpointer, store, gcs_storage, job_dict):
+    # Validation happens inside a try so a schema-invalid job still publishes
+    # an `error` event - previously this raised before anything was written
+    # to the stream, and the browser's SSE connection (already open, blocked
+    # on xread) hung forever with no way to know the job failed.
+    try:
+        job = AgentJob.model_validate(job_dict)
+    except Exception:
+        logger.exception("Invalid agent job payload: %r", job_dict)
+        thread_id = job_dict.get("thread_id") if isinstance(job_dict, dict) else None
+        if thread_id:
+            await redis_client.xadd(
+                thread_id, {"type": "error", "data": "Invalid job; please try again."}
+            )
+            await redis_client.expire(thread_id, 3600)
+        return
 
     gcs_backend = GCSBackend(gcs_storage, settings.GCS_BUCKET_NAME, thread_id=job.thread_id)
 
@@ -88,7 +104,10 @@ async def execute_agent(redis_client, checkpointer, store, gcs_storage, job):
         }
         await redis_client.xadd(job.thread_id, payload)
         await redis_client.expire(job.thread_id, 3600)
-        await redis_client.set(f"thread_status:{job.thread_id}", "RUNNING")
+        # ex=3600: belt-and-suspenders against the key leaking forever if a
+        # process dies between here and the `finally` below (which is the
+        # normal cleanup path for every exit - completion, stop, and error).
+        await redis_client.set(f"thread_status:{job.thread_id}", "RUNNING", ex=3600)
 
         agent_tools = []
         for tool_name in job.tools_config:
@@ -200,20 +219,30 @@ async def execute_agent(redis_client, checkpointer, store, gcs_storage, job):
                 }
                 await redis_client.xadd(job.thread_id, payload)
                 await redis_client.expire(job.thread_id, 3600)
-                await redis_client.delete(f"thread_status:{job.thread_id}")
                 break
 
             # Otherwise, resume from the interrupt at the next node
             next_input = Command(resume=True)
 
-    except Exception as e:
-        traceback.print_exc()
+    except Exception:
+        # Log the real traceback server-side, but never forward raw
+        # exception text to the browser - it gets rendered verbatim into the
+        # transcript (threads.$agentId.$threadId.tsx) and can leak internals
+        # (stack frames, file paths, query fragments) to the end user.
+        logger.exception("Agent execution failed for thread %s", job.thread_id)
         error_payload = {
             "type": "error",
-            "data": str(e)
+            "data": "The agent encountered an error while processing your request.",
         }
         await redis_client.xadd(job.thread_id, error_payload)
         await redis_client.expire(job.thread_id, 3600)
+    finally:
+        # Every exit path (normal completion, user stop, exception) must
+        # clear this - previously only the STOP branch did, so completion
+        # and the exception path both left thread_status stuck at "RUNNING"
+        # forever (no TTL either, until the ex=3600 above), which made the
+        # NEXT run for this thread misinterpret a stale STOP as its own.
+        await redis_client.delete(f"thread_status:{job.thread_id}")
 
 async def run_agent_and_cleanup(redis_client, checkpointer, store, gcs_storage, job, lock, semaphore):
     try:
@@ -259,17 +288,52 @@ async def main():
                 continue
             if result:
                 _, job_data = result
-                job = json.loads(job_data)
-                print(f"Received job: {job}")
-
-                lock =  redis_client.lock(f"agent_thread_lock:{job.get('thread_id')}", timeout=300)
-                if not await lock.acquire(blocking=False):
-                    print(f"Could not acquire lock for thread {job.get('thread_id')}. Another execution is in progress.")
+                # A single malformed queue entry must not kill the whole
+                # consumer loop - previously json.loads sat outside every
+                # try/except in this function, so one bad message propagated
+                # out of main() and took the entire worker process down.
+                try:
+                    job = json.loads(job_data)
+                except Exception:
+                    logger.exception("Malformed job on queue, dropping: %r", job_data)
                     semaphore.release()
                     continue
 
-                # 4. Create the background task
-                asyncio.create_task(run_agent_and_cleanup(redis_client, checkpointer, store, gcs_storage, job, lock, semaphore))
+                thread_id = job.get("thread_id") if isinstance(job, dict) else None
+                if not thread_id:
+                    logger.error("Job missing thread_id, dropping: %r", job)
+                    semaphore.release()
+                    continue
+
+                try:
+                    lock = redis_client.lock(f"agent_thread_lock:{thread_id}", timeout=300)
+                    if not await lock.acquire(blocking=False):
+                        logger.warning(
+                            "Could not acquire lock for thread %s; another execution may be in progress.",
+                            thread_id,
+                        )
+                        # Only surface an error to the client if nothing else
+                        # is actively running for this thread. If a job IS
+                        # genuinely in progress, both clients share the same
+                        # Redis stream (keyed by thread_id) and this one will
+                        # naturally see the in-progress job's eventual `done`
+                        # - emitting our own `error` here would instead cut
+                        # that live stream short for both listeners.
+                        if (await redis_client.get(f"thread_status:{thread_id}")) != "RUNNING":
+                            await redis_client.xadd(thread_id, {
+                                "type": "error",
+                                "data": "Another request for this thread could not be processed. Please try again.",
+                            })
+                            await redis_client.expire(thread_id, 3600)
+                        semaphore.release()
+                        continue
+
+                    # 4. Create the background task
+                    asyncio.create_task(run_agent_and_cleanup(redis_client, checkpointer, store, gcs_storage, job, lock, semaphore))
+                except Exception:
+                    logger.exception("Failed to dispatch job for thread %s", thread_id)
+                    semaphore.release()
+                    continue
 
             else:
                 # No job found, release the slot immediately and rest briefly

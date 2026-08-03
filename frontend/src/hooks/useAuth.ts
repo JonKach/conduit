@@ -55,6 +55,11 @@ const useAuth = () => {
 
   const logout = () => {
     localStorage.removeItem("access_token")
+    // Otherwise ["currentUser"] and every other cached query (threads,
+    // agents, ...) survive in memory across a logout in the same tab, so a
+    // subsequent login as a different user could momentarily render stale
+    // data from the previous session.
+    queryClient.clear()
     navigate({ to: "/login" })
   }
 

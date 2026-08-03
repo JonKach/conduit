@@ -1,29 +1,46 @@
+from pathlib import Path
+
 from lxml.html.builder import B
 from _asyncio import Future
 from app.core.config import settings
 from fastapi_cloud_cli.commands.env import delete
 import asyncio
 from fastapi import APIRouter, Depends
+from fastapi_limiter.decorators import skip_limiter
+from fastapi_limiter.depends import RateLimiter
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres.aio import AsyncPostgresStore
 from pydantic.networks import EmailStr
 from sqlmodel import col, select
 
-from app.api.deps import get_current_active_superuser
+from app.api.deps import CurrentUser, get_current_active_superuser
 from app.core.db import AsyncSessionLocal
+from app.core.security import general_bucket, user_or_ip_identifier
 from app.models import Agent, Message, Thread
 from app.utils import generate_test_email, send_email
 from gcloud.aio.storage import Storage, Bucket, Blob
 import json
 
-router = APIRouter(prefix="/utils", tags=["utils"])
+router = APIRouter(
+    prefix="/utils",
+    tags=["utils"],
+    dependencies=[Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))],
+)
+
+# Loaded once at import time instead of re-reading + re-parsing the file (and
+# leaking the handle) on every single request to this endpoint.
+_AVAILABLE_TOOLS: list[str] = json.loads(
+    (Path(__file__).resolve().parent.parent.parent / "available_tools.json").read_text()
+)["available_tools"]
+
 
 @router.get("/get-tools/")
-def get_tools() -> list[str]:
+def get_tools(current_user: CurrentUser) -> list[str]:
     """
-    Get available tools.
+    Get available tools. Its only frontend callers (EditAgent, AddAgent) are
+    both behind the authenticated app shell, so this never needed to be public.
     """
-    return json.loads(open("app/available_tools.json").read())["available_tools"]
+    return _AVAILABLE_TOOLS
 
 @router.post(
     "/test-email/",
@@ -44,7 +61,11 @@ def test_email(email_to: EmailStr) -> Message:
 
 
 @router.get("/health-check/")
-def health_check() -> bool:
+@skip_limiter
+async def health_check() -> bool:
+    # Must stay public and unthrottled: compose.yml and the ALB/orchestrator
+    # health probe hit this constantly, and it's already the one endpoint
+    # with nothing sensitive to protect.
     return True
 
 

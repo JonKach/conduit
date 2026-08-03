@@ -1,8 +1,10 @@
 import redis
 import asyncio
 import json
+import logging
 import re
 import uuid
+from pathlib import PurePosixPath
 from typing import Annotated, Any
 
 import aiohttp
@@ -52,6 +54,8 @@ from app.models import (
     ThreadWithAgentPublic,
     get_datetime_utc,
 )
+
+logger = logging.getLogger(__name__)
 
 baseRouter = APIRouter(prefix="/agents/{agent_id}/threads", tags=["threads"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))])
 
@@ -187,7 +191,6 @@ async def stop_stream_thread_conversation(
     redis_client = request.app.state.redis_client
 
     curr_thread_state = await redis_client.get(f"thread_status:{thread.id}")
-    print("curr_thread_state", curr_thread_state)
     if curr_thread_state != "RUNNING":
         raise HTTPException(status_code=400, detail="Thread is not currently running.")
 
@@ -201,9 +204,17 @@ async def upload(thread: AllowedThread, file: UploadFile, request: Request, cont
     if content_length > settings.MAX_FILE_UPLOAD_SIZE or (file.size or 0) > settings.MAX_FILE_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="File is too large.")
 
+    # Thread uploads are stored flat, so only the basename of the client's
+    # filename is a legitimate object name - this also strips any directory
+    # components a browser sent (e.g. a full Windows path) rather than
+    # passing the raw, attacker-controlled filename straight into the store.
+    basename = PurePosixPath(file.filename.replace("\\", "/")).name if file.filename else ""
+    if not basename:
+        raise HTTPException(status_code=400, detail="File must have a name.")
+
     raw = await file.read()
     scoped = GCSBackend(request.app.state.gcs_storage, settings.GCS_BUCKET_NAME, root_prefix="agent-files", thread_id=thread.id)
-    path = await scoped.put_upload(f"/{file.filename}", raw, content_type=file.content_type)
+    path = await scoped.put_upload(f"/{basename}", raw, content_type=file.content_type)
     return {"path": path}   # e.g. "/invoice.pdf"
 
 @baseRouter.get("/{thread_id}/files")
@@ -287,17 +298,29 @@ async def update_thread(
     await session.refresh(thread)
     return ThreadPublic.model_validate(thread)
 
-@baseRouter.delete("/{thread_id}/files/{file_path}")
+@baseRouter.delete("/{thread_id}/files/{file_path:path}")
 async def delete_file(thread: AllowedThread, file_path: str, request: Request) -> Message:
-    """Delete a file from a thread's media store."""
-    storage = request.app.state.gcs_storage
+    """Delete a file from a thread's media store.
+
+    ``{file_path:path}`` (not a plain string segment) so nested paths a
+    thread might contain (e.g. "/reports/q1.pdf" from list_files) are
+    actually reachable - previously any `/` in the path meant the route
+    never matched at all. Deletion goes through GCSBackend.adelete(), which
+    sanitizes the path the same way every read/write does, instead of
+    hand-concatenating the object key here.
+    """
+    scoped = GCSBackend(request.app.state.gcs_storage, settings.GCS_BUCKET_NAME, root_prefix="agent-files", thread_id=thread.id)
     try:
-        await storage.delete(settings.GCS_BUCKET_NAME, f"agent-files/{thread.id}/{file_path}")
+        found = await scoped.adelete(f"/{file_path}")
+    except ValueError:
+        raise HTTPException(400, "Invalid file path.")
     except aiohttp.ClientResponseError as e:
-        if e.status == 404:
-            raise HTTPException(404, "File not found.")
-    except Exception as e:
-        raise HTTPException(500, "Unexpected Error")
+        # A non-404 failure (e.g. 403 from GCS) means the delete did NOT
+        # happen - it must not be reported to the caller as success.
+        logger.exception("GCS delete failed for thread %s path %s", thread.id, file_path)
+        raise HTTPException(502, "Failed to delete file.")
+    if not found:
+        raise HTTPException(404, "File not found.")
     return Message(message="File deleted successfully.")
 
 @baseRouter.delete("/{thread_id}")

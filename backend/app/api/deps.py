@@ -35,19 +35,28 @@ SessionDep = Annotated[AsyncSession, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
 async def get_current_user(session: SessionDep, token: TokenDep) -> User:
+    # 401 (not 403) here: the token itself is missing/invalid/expired, i.e. the
+    # session is unauthenticated. This is what lets the frontend's "log out on
+    # 401" handler (main.tsx) fire and bounce an expired session to /login,
+    # instead of the app quietly breaking. 403 is reserved for a *valid*
+    # session that lacks permission (see get_current_active_superuser below).
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
         )
         token_data = TokenPayload(**payload)
     except (InvalidTokenError, ValidationError):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Could not validate credentials",
-        )
+        raise credentials_exception
     user = await session.get(User, token_data.sub)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        # A token for a deleted account is just as invalid a session as a bad
+        # token - treat it the same way rather than leaking user existence.
+        raise credentials_exception
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user

@@ -74,3 +74,20 @@ if settings.all_cors_origins:
     )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+if settings.ENVIRONMENT != "local":
+    # api/main.py only mounts the private (unauthenticated user-creation)
+    # router when ENVIRONMENT=="local" - but that mount is one bad/missing
+    # env var away from shipping to prod. Check the ACTUAL mounted route
+    # table too, and refuse to start rather than silently serving it.
+    _private_prefix = f"{settings.API_V1_STR}/private"
+    _leaked_private_routes = [
+        route.path
+        for route in app.routes
+        if getattr(route, "path", "").startswith(_private_prefix)
+    ]
+    if _leaked_private_routes:
+        raise RuntimeError(
+            "Refusing to start: dev-only private routes are mounted with "
+            f"ENVIRONMENT={settings.ENVIRONMENT!r}: {_leaked_private_routes}"
+        )

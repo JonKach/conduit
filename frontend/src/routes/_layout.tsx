@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
 
-import { Footer } from "@/components/Common/Footer"
+import { UsersService } from "@/client"
 import AppSidebar from "@/components/Sidebar/AppSidebar"
 import {
   SidebarInset,
@@ -11,11 +11,27 @@ import { isLoggedIn } from "@/hooks/useAuth"
 
 export const Route = createFileRoute("/_layout")({
   component: Layout,
-  beforeLoad: async () => {
+  beforeLoad: async ({ context }) => {
+    // isLoggedIn() is just "is there a token in localStorage" - it never
+    // validates it, so an expired/forged token used to pass this gate and
+    // the app would quietly stop working instead of bouncing to /login.
+    // ensureQueryData actually calls the API (and, via the shared
+    // ["currentUser"] key, warms the same cache useAuth() reads) so an
+    // expired session gets caught here instead.
     if (!isLoggedIn()) {
-      throw redirect({
-        to: "/login",
+      throw redirect({ to: "/login" })
+    }
+    try {
+      await context.queryClient.ensureQueryData({
+        queryKey: ["currentUser"],
+        queryFn: UsersService.readUserMe,
+        staleTime: 5 * 60 * 1000,
+        retry: false, // an expired/invalid token will never succeed on retry
       })
+    } catch {
+      localStorage.removeItem("access_token")
+      context.queryClient.clear()
+      throw redirect({ to: "/login" })
     }
   },
 })
@@ -33,7 +49,6 @@ function Layout() {
             <Outlet />
           </div>
         </main>
-        <Footer />
       </SidebarInset>
     </SidebarProvider>
   )
