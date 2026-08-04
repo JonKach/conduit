@@ -35,6 +35,23 @@ services:
       - traefik.http.middlewares.admin-auth.basicauth.users=${USERNAME?Variable not set}:${HASHED_PASSWORD?Variable not set}
       # Enable HTTP Basic auth, using the middleware created above
       - traefik.http.routers.traefik-dashboard-https.middlewares=admin-auth
+      # ---- Apex redirect: yourdomain.com -> dashboard.yourdomain.com ----
+      # Middleware: rewrite any apex request to the dashboard subdomain, preserving the path
+      - traefik.http.middlewares.apex-to-dashboard.redirectregex.regex=^https?://[^/]+/?(.*)
+      - traefik.http.middlewares.apex-to-dashboard.redirectregex.replacement=https://dashboard.${DOMAIN?Variable not set}/$${1}
+      - traefik.http.middlewares.apex-to-dashboard.redirectregex.permanent=true
+      # HTTP apex router: redirect straight to the HTTPS dashboard in one hop
+      - traefik.http.routers.apex-redirect-http.entrypoints=http
+      - traefik.http.routers.apex-redirect-http.rule=Host(`${DOMAIN?Variable not set}`)
+      - traefik.http.routers.apex-redirect-http.middlewares=apex-to-dashboard
+      - traefik.http.routers.apex-redirect-http.service=noop@internal
+      # HTTPS apex router: gets its own cert, then redirects
+      - traefik.http.routers.apex-redirect-https.entrypoints=https
+      - traefik.http.routers.apex-redirect-https.rule=Host(`${DOMAIN?Variable not set}`)
+      - traefik.http.routers.apex-redirect-https.tls=true
+      - traefik.http.routers.apex-redirect-https.tls.certresolver=le
+      - traefik.http.routers.apex-redirect-https.middlewares=apex-to-dashboard
+      - traefik.http.routers.apex-redirect-https.service=noop@internal
     volumes:
       # Add Docker as a mounted volume, so that Traefik can read the labels of other services
       - /var/run/docker.sock:/var/run/docker.sock:ro

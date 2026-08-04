@@ -15,6 +15,19 @@ from app.core.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Rasterized (not SVG - Outlook desktop won't render <img src="*.svg">) brand
+# wordmark. It's embedded directly in each email as a CID (Content-ID) MIME
+# attachment rather than linked by URL: the recipient's mail client renders
+# HTML on THEIR machine, with no access to our filesystem and no server to
+# resolve a relative or local path against - it can only fetch a real,
+# publicly-reachable https:// URL, or read bytes we ship inline in the
+# message itself. CID embedding needs no hosting at all and works
+# identically in local/staging/prod, so every template references the logo
+# as `src="cid:logo"` and send_email() attaches these bytes under that id.
+EMAIL_LOGO_CID = "logo"
+EMAIL_LOGO_PATH = Path(__file__).parent / "email-templates" / "src" / "conduit-logo-email.png"
+EMAIL_LOGO_BYTES = EMAIL_LOGO_PATH.read_bytes()
+
 
 @dataclass
 class EmailData:
@@ -55,6 +68,14 @@ def send_email(
         html=html_content,
         mail_from=mail_from,
     )
+    # Every template embeds the logo via `src="cid:logo"`; attach the actual
+    # bytes under that same content_id so it resolves without any hosting.
+    message.attach(
+        filename="conduit-logo-email.png",
+        content_disposition="inline",
+        data=EMAIL_LOGO_BYTES,
+        content_id=EMAIL_LOGO_CID,
+    )
     smtp_options = {"host": settings.SMTP_HOST, "port": settings.SMTP_PORT}
     if settings.SMTP_TLS:
         smtp_options["tls"] = True
@@ -77,7 +98,11 @@ def generate_test_email(email_to: str) -> EmailData:
     subject = f"{project_name} - Test email"
     html_content = render_email_template(
         template_name="test_email.html",
-        context={"project_name": settings.PROJECT_NAME, "email": email_to},
+        context={
+            "project_name": settings.PROJECT_NAME,
+            "email": email_to,
+            "logo_url": f"cid:{EMAIL_LOGO_CID}",
+        },
     )
     return EmailData(html_content=html_content, subject=subject)
 
@@ -94,6 +119,7 @@ def generate_reset_password_email(email_to: str, email: str, token: str) -> Emai
             "email": email_to,
             "valid_hours": settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS,
             "link": link,
+            "logo_url": f"cid:{EMAIL_LOGO_CID}",
         },
     )
     return EmailData(html_content=html_content, subject=subject)
@@ -112,6 +138,7 @@ def generate_new_account_email(
             "password": password,
             "email": email_to,
             "link": settings.FRONTEND_HOST,
+            "logo_url": f"cid:{EMAIL_LOGO_CID}",
         },
     )
     return EmailData(html_content=html_content, subject=subject)

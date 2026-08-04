@@ -12,3 +12,5 @@ node_modules/
 .DS_Store
 .postman
 production_plan.md
+deploy_steps.md
+cloudflare_setup.md
