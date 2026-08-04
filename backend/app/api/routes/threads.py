@@ -143,6 +143,12 @@ async def redis_sse_generator(thread_id: str, last_id: str = '0'):
     except Exception as e:
         print(f"Error in SSE generator: {e}")
         yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'id': last_id})}\n\n"
+    finally:
+        # This client owns its own pool rather than sharing app.state.redis_client,
+        # so it has to be released per-connection. The finally also covers the
+        # client-disconnect path, where Starlette closes this generator and the
+        # resulting GeneratorExit bypasses the `except Exception` above.
+        await redis_client.aclose()
 
 @premiumRouter.post("/{thread_id}/stream")
 async def stream_thread_conversation(
