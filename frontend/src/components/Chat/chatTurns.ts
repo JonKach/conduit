@@ -52,11 +52,8 @@ export interface HistoryMessage {
   usage?: UsageInfo | null
 }
 
-// Matches the marker `build_user_message` (backend/app/gcs_backend.py, reference
-// mode) appends to a user turn's text. Two sections can appear — "Available
-// Files" (everything in the thread, re-listed every turn, for the model's
-// benefit) and "Attached Files" (only what THIS message attached). Only the
-// latter should ever turn into a glyph.
+// Marker appended by build_user_message (backend/app/gcs_backend.py). Only the
+// "Attached Files" section is rendered; "Available Files" is for the model.
 const PROMPT_DATA_MARKER = "%%PROMPT_DATA%%"
 const ATTACHED_FILES_HEADER = "Attached Files:"
 

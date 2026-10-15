@@ -32,16 +32,18 @@ dependencies = [
     "pypdf>=6.14.2",
     "python-docx>=1.2.0",
     "fastapi-limiter>=0.2.0",
+    "sqlalchemy[asyncio]>=2.0.0,<3.0.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest<8.0.0,>=7.4.3",
+    "pytest>=8.3",
     "mypy<2.0.0,>=1.8.0",
     "ty>=0.0.25",
     "ruff<1.0.0,>=0.2.2",
     "prek>=0.2.24,<1.0.0",
     "coverage<8.0.0,>=7.4.3",
+    "pytest-asyncio>=1.0",
 ]
 
 [build-system]
@@ -78,6 +80,14 @@ ignore = [
 [tool.ruff.lint.pyupgrade]
 # Preserve types, even if a file imports `from __future__ import annotations`.
 keep-runtime-typing = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# One event loop for the whole run so the module-level asyncpg engine is never
+# shared across loops.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 
 [tool.coverage.run]
 source = ["app"]

@@ -163,7 +163,7 @@ function ItemsTableContent() {
 
 function ItemsTable() {
   return (
-    <Suspense fallback={<PendingItems />}>
+    <Suspense fallback={<PendingAgents />}>
       <ItemsTableContent />
     </Suspense>
   )

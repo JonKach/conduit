@@ -30,13 +30,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     API_V1_STR: str = "/api/v1"
-    # Deliberately NOT secrets.token_urlsafe(32): a random-per-process default
-    # silently mints a different key on every restart (and every replica),
-    # invalidating all outstanding JWTs and breaking token validation the
-    # moment there's more than one backend instance. "changethis" instead
-    # lets the existing _enforce_non_default_secrets validator below actually
-    # do its job: warn locally, hard-fail startup outside local dev unless a
-    # real value is set.
     SECRET_KEY: str = "changethis"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     FRONTEND_HOST: str = "http://localhost:5173"

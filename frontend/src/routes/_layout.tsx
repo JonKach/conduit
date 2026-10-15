@@ -12,12 +12,7 @@ import { isLoggedIn } from "@/hooks/useAuth"
 export const Route = createFileRoute("/_layout")({
   component: Layout,
   beforeLoad: async ({ context }) => {
-    // isLoggedIn() is just "is there a token in localStorage" - it never
-    // validates it, so an expired/forged token used to pass this gate and
-    // the app would quietly stop working instead of bouncing to /login.
-    // ensureQueryData actually calls the API (and, via the shared
-    // ["currentUser"] key, warms the same cache useAuth() reads) so an
-    // expired session gets caught here instead.
+    // isLoggedIn() only checks for a stored token, so validate it against the API.
     if (!isLoggedIn()) {
       throw redirect({ to: "/login" })
     }
@@ -26,7 +21,7 @@ export const Route = createFileRoute("/_layout")({
         queryKey: ["currentUser"],
         queryFn: UsersService.readUserMe,
         staleTime: 5 * 60 * 1000,
-        retry: false, // an expired/invalid token will never succeed on retry
+        retry: false,
       })
     } catch {
       localStorage.removeItem("access_token")

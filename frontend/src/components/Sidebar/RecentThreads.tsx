@@ -56,7 +56,10 @@ export function RecentThreads() {
                     >
                       <RouterLink
                         to="/threads/$agentId/$threadId"
-                        params={{ agentId: thread.agent_id, threadId: thread.id }}
+                        params={{
+                          agentId: thread.agent_id,
+                          threadId: thread.id,
+                        }}
                         onClick={handleMenuClick}
                       >
                         <MessageSquare />

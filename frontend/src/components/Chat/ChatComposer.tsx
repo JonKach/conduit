@@ -40,9 +40,7 @@ const ChatComposer = ({
   onStop,
 }: ChatComposerProps) => {
   const [text, setText] = useState("")
-  // Only files uploaded in THIS composer session — never seeded from thread
-  // history. Previously-uploaded files live in the ThreadFilesDialog instead;
-  // reopening a thread must not look like a dozen files are staged to resend.
+  // Files staged in this session only; earlier uploads live in ThreadFilesDialog.
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()

@@ -265,7 +265,7 @@ function ChatPageContent({
   const handleStop = () => {
     ThreadsService.stopStreamThreadConversation({ agentId, threadId }).catch(
       () => {
-        // If the thread already finished, the backend 400s — nothing to do.
+        // The backend returns 400 if the thread already finished.
       },
     )
   }

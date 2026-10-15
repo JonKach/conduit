@@ -1,8 +1,5 @@
 import io
 import re
-import stat
-import uuid
-from ast import Pass
 from typing import Annotated, Any, Literal
 
 import magic
@@ -10,18 +7,18 @@ from docx import Document
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     Depends,
     Form,
+    Header,
     HTTPException,
     Request,
     UploadFile,
-    Header,
-    Body
 )
 from fastapi_limiter.depends import RateLimiter
+from gcloud.aio.storage import Bucket
 from langgraph.store.postgres.aio import AsyncPostgresStore
 from pypdf import PdfReader
-from sqlalchemy import update
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, func, select
 
@@ -36,13 +33,19 @@ from app.models import (
     AgentUpdate,
     Message,
     Thread,
-    UserPublicAgentsLink
+    UserPublicAgentsLink,
 )
 
 from .utils import delete_agent_store, delete_langgraph_threads
-from gcloud.aio.storage import Bucket
 
-router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(reusable_oauth2), Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))])
+router = APIRouter(
+    prefix="/agents",
+    tags=["agents"],
+    dependencies=[
+        Depends(reusable_oauth2),
+        Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier)),
+    ],
+)
 
 
 @router.get("/me", response_model=AgentsPublic)
@@ -54,9 +57,7 @@ async def read_agents(
     """
 
     count_statement = (
-        select(func.count())
-        .select_from(Agent)
-        .where(Agent.owner_id == current_user.id)
+        select(func.count()).select_from(Agent).where(Agent.owner_id == current_user.id)
     )
     count = await session.exec(count_statement)
     count = count.one()
@@ -70,8 +71,12 @@ async def read_agents(
     agents = await session.exec(statement)
     agents = agents.all()
 
-    agents_public = [AgentPublic.model_validate(agent, update={"owner_name": current_user.full_name}) for agent in agents]
+    agents_public = [
+        AgentPublic.model_validate(agent, update={"owner_name": current_user.full_name})
+        for agent in agents
+    ]
     return AgentsPublic(data=agents_public, count=count)
+
 
 @router.get("/public", response_model=AgentsPublic)
 async def read_public_agents(
@@ -85,8 +90,8 @@ async def read_public_agents(
     Retrieve all public agents (marketplace). `sort=popular` orders by how
     many users have added the agent to their own list.
     """
-    # Superusers browse every agent here (public or not); everyone else only
-    # sees agents marked public. Only the WHERE clause differs between them.
+    # Superusers browse every agent while regular users only see agents marked public.
+    # Only the WHERE clause differs between them.
     base_filter = [] if current_user.is_superuser else [Agent.is_public]
 
     count_statement = select(func.count()).select_from(Agent).where(*base_filter)
@@ -95,7 +100,7 @@ async def read_public_agents(
 
     added_count_subq = (
         select(
-            UserPublicAgentsLink.agent_id.label("agent_id"), #type: ignore
+            UserPublicAgentsLink.agent_id.label("agent_id"),  # type: ignore
             func.count().label("added_count"),
         )
         .group_by(UserPublicAgentsLink.agent_id)
@@ -110,7 +115,9 @@ async def read_public_agents(
         .where(*base_filter)
     )
     if sort == "popular":
-        statement = statement.order_by(added_count_col.desc(), col(Agent.created_at).desc())
+        statement = statement.order_by(
+            added_count_col.desc(), col(Agent.created_at).desc()
+        )
     else:
         statement = statement.order_by(col(Agent.created_at).desc())
     statement = statement.offset(skip).limit(limit)
@@ -119,7 +126,9 @@ async def read_public_agents(
     rows = rows.all()
 
     added_ids_result = await session.exec(
-        select(UserPublicAgentsLink.agent_id).where(UserPublicAgentsLink.user_id == current_user.id)
+        select(UserPublicAgentsLink.agent_id).where(
+            UserPublicAgentsLink.user_id == current_user.id
+        )
     )
     added_ids = set(added_ids_result.all())
 
@@ -136,6 +145,7 @@ async def read_public_agents(
         for agent, added_count in rows
     ]
     return AgentsPublic(data=agents_public, count=count)
+
 
 @router.get("/added-public", response_model=AgentsPublic)
 async def read_added_public_agents(
@@ -172,8 +182,13 @@ async def read_added_public_agents(
     ]
     return AgentsPublic(data=agents_public, count=count)
 
+
 @router.post("/added-public", response_model=Message)
-async def add_public_agent(current_user: CurrentUser, session: SessionDep, agent_id: str = Body(..., embed=True)) -> Message:
+async def add_public_agent(
+    current_user: CurrentUser,
+    session: SessionDep,
+    agent_id: str = Body(..., embed=True),
+) -> Message:
     """
     Add a public agent to the current user's list of added public agents.
     """
@@ -183,7 +198,9 @@ async def add_public_agent(current_user: CurrentUser, session: SessionDep, agent
     if not agent.is_public:
         raise HTTPException(status_code=403, detail="Cannot add a non-public agent")
     if agent.owner_id == current_user.id:
-        raise HTTPException(status_code=403, detail="Cannot add your own agent to added public agents")
+        raise HTTPException(
+            status_code=403, detail="Cannot add your own agent to added public agents"
+        )
 
     link = UserPublicAgentsLink(agent_id=agent.id, user_id=current_user.id)
     session.add(link)
@@ -203,6 +220,7 @@ async def read_agent(agent: AllowedAgent, current_user: CurrentUser) -> Any:
     )
     return agent_public
 
+
 @router.get("/{agent_id}/profile-picture")
 async def get_profile_picture(agent: AllowedAgent, request: Request) -> Any:
     """
@@ -216,9 +234,10 @@ async def get_profile_picture(agent: AllowedAgent, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="Profile picture not found")
     blob = bucket.new_blob(profile_picture_path)
     return await blob.get_signed_url(
-        60 * 60,                       # gcloud-aio expiration is in SECONDS
+        60 * 60,  # gcloud-aio expiration is in SECONDS
         http_method="GET",
     )
+
 
 @router.post("/", response_model=AgentPublic)
 async def create_agent(
@@ -233,11 +252,12 @@ async def create_agent(
     await session.refresh(agent)
     return agent
 
+
 ALLOWED_MIME_TYPES = {
     "text/markdown",
     "text/plain",
     "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
 MAX_SKILL_NAME_LENGTH = 100
@@ -247,10 +267,10 @@ _SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 def _validate_skill_name(skill_name: str) -> str:
     """Reject anything that isn't a plain, single-segment name.
 
-    ``skill_name`` becomes both a Postgres store key segment and a URL path
+    skill_name becomes both a Postgres store key segment and a URL path
     segment (GET/DELETE .../skills/{skill_name}), so it must never contain a
-    path separator or a traversal segment - the frontend already slugifies
-    via toSkillName(), but the server must not trust client-side sanitization.
+    path separator. Frontend already ensures this via toSkillName(), but the
+    server shouldn't trust client-side actions.
     """
     name = skill_name.strip()
     if not name or len(name) > MAX_SKILL_NAME_LENGTH or not _SKILL_NAME_RE.match(name):
@@ -263,17 +283,23 @@ def _validate_skill_name(skill_name: str) -> str:
 
 @router.post("/{agent_id}/skills")
 async def upload_skill(
-    agent: AllowedAgent, current_user: CurrentUser, file: UploadFile, request: Request,
-    skill_name: Annotated[str, Form()], session: SessionDep, content_length: Annotated[int, Header()]
+    agent: AllowedAgent,
+    current_user: CurrentUser,
+    file: UploadFile,
+    request: Request,
+    skill_name: Annotated[str, Form()],
+    session: SessionDep,
+    content_length: Annotated[int, Header()],
 ) -> Message:
-
     if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(403, "Only the agent creator can upload skill files.")
 
     skill_name = _validate_skill_name(skill_name)
     skill_entry = f"{skill_name}/SKILL.md"
     if skill_entry in agent.skill_files:
-        raise HTTPException(status_code=409, detail="A skill with this name already exists.")
+        raise HTTPException(
+            status_code=409, detail="A skill with this name already exists."
+        )
 
     MAX_SKILL_FILE_SIZE = 1024 * 1024 * 2  # 2 MB
     if content_length > MAX_SKILL_FILE_SIZE or (file.size or 0) > MAX_SKILL_FILE_SIZE:
@@ -287,7 +313,7 @@ async def upload_skill(
     if mime_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type. Only .md, .txt, .pdf, and .docx files are allowed. You provided '{mime_type}'."
+            detail=f"Invalid file type. Only .md, .txt, .pdf, and .docx files are allowed. You provided '{mime_type}'.",
         )
 
     try:
@@ -296,7 +322,13 @@ async def upload_skill(
         elif mime_type == "application/pdf":
             with io.BytesIO(contents) as open_pdf:
                 reader = PdfReader(open_pdf)
-                text_content = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+                text_content = "\n".join(
+                    [
+                        page.extract_text()
+                        for page in reader.pages
+                        if page.extract_text()
+                    ]
+                )
         else:  # application/vnd.openxmlformats-officedocument.wordprocessingml.document
             with io.BytesIO(contents) as open_docx:
                 doc = Document(open_docx)
@@ -304,17 +336,27 @@ async def upload_skill(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error parsing file: {str(e)}")
 
-    await store.aput((agent.id,), f"/{skill_entry}", value={"content": text_content, "encoding": "utf-8"})
+    await store.aput(
+        (agent.id,),
+        f"/{skill_entry}",
+        value={"content": text_content, "encoding": "utf-8"},
+    )
 
     agent.sqlmodel_update({"skill_files": agent.skill_files + [skill_entry]})
     await session.commit()
     await session.refresh(agent)
     return Message(message="Skill uploaded successfully!")
 
-@router.post("/{agent_id}/profile-picture") #This also acts as the update profile endpoint
+
+@router.post(
+    "/{agent_id}/profile-picture"
+)  # This also acts as the update profile endpoint
 async def upload_profile_picture(
-    agent: AllowedAgent, current_user: CurrentUser, file: UploadFile, request: Request,
-    content_length: Annotated[int, Header()]
+    agent: AllowedAgent,
+    current_user: CurrentUser,
+    file: UploadFile,
+    request: Request,
+    content_length: Annotated[int, Header()],
 ) -> Message:
     if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(403, "Only the agent creator can upload profile pictures.")
@@ -329,13 +371,19 @@ async def upload_profile_picture(
     if mime_type not in {"image/jpeg", "image/png", "image/gif"}:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type. Only .jpg, .jpeg, .png, and .gif files are allowed. You provided '{mime_type}'."
+            detail=f"Invalid file type. Only .jpg, .jpeg, .png, and .gif files are allowed. You provided '{mime_type}'.",
         )
 
     storage = request.app.state.gcs_storage
-    await storage.upload(settings.GCS_BUCKET_NAME, f"agent-profiles/{agent.id}", contents, content_type=mime_type)
+    await storage.upload(
+        settings.GCS_BUCKET_NAME,
+        f"agent-profiles/{agent.id}",
+        contents,
+        content_type=mime_type,
+    )
 
     return Message(message="Profile picture uploaded successfully!")
+
 
 @router.get("/{agent_id}/skills")
 async def get_skill_names(agent: AllowedAgent) -> Any:
@@ -353,8 +401,11 @@ async def get_skill_names(agent: AllowedAgent) -> Any:
         "skill_names": [name.removesuffix("/SKILL.md") for name in agent.skill_files]
     }
 
+
 @router.get("/{agent_id}/skills/{skill_name}")
-async def get_skill_content(agent: AllowedAgent, skill_name: str, request: Request) -> Any:
+async def get_skill_content(
+    agent: AllowedAgent, skill_name: str, request: Request
+) -> Any:
     """
     Get the content of a specific skill for an agent.
     """
@@ -363,6 +414,7 @@ async def get_skill_content(agent: AllowedAgent, skill_name: str, request: Reque
     if not content:
         raise HTTPException(status_code=404, detail="Skill not found")
     return {"skill_name": skill_name, "content": content.value.get("content", "")}
+
 
 @router.put("/{agent_id}", response_model=AgentPublic)
 async def update_agent(
@@ -376,7 +428,7 @@ async def update_agent(
     Update an agent.
     """
     # AllowedAgent only guarantees READ access (which public agents grant to
-    # everyone) -- writes need their own ownership check.
+    # everyone) so writes need their own ownership check.
     if not current_user.is_superuser and agent.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
@@ -387,7 +439,8 @@ async def update_agent(
         and update_dict.get("is_public") is False
     ):
         raise HTTPException(
-            status_code=403, detail="Cannot unpublish a public agent manually. Contact support."
+            status_code=403,
+            detail="Cannot unpublish a public agent manually. Contact support.",
         )
 
     agent.sqlmodel_update(update_dict)
@@ -399,7 +452,11 @@ async def update_agent(
 
 @router.delete("/{agent_id}")
 async def delete_agent(
-    session: SessionDep, current_user: CurrentUser, agent_id: str, background_tasks: BackgroundTasks, request: Request
+    session: SessionDep,
+    current_user: CurrentUser,
+    agent_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
 ) -> Message:
     """
     Delete an agent.
@@ -411,21 +468,36 @@ async def delete_agent(
     if not current_user.is_superuser and (agent.owner_id != current_user.id):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     if not current_user.is_superuser and agent.is_public:
-        raise HTTPException(status_code=403, detail="Cannot unpublish a public agent manually. Contact support.")
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot unpublish a public agent manually. Contact support.",
+        )
 
     statement = select(Thread.id).where(col(Thread.agent_id) == agent.id)
     result = await session.exec(statement)
     thread_ids = result.all()
 
-    background_tasks.add_task(delete_langgraph_threads, list(thread_ids), request.app.state.connection_pool, request.app.state.gcs_storage)
-    background_tasks.add_task(delete_agent_store, [agent.id], request.app.state.connection_pool, request.app.state.gcs_storage)
+    background_tasks.add_task(
+        delete_langgraph_threads,
+        list(thread_ids),
+        request.app.state.connection_pool,
+        request.app.state.gcs_storage,
+    )
+    background_tasks.add_task(
+        delete_agent_store,
+        [agent.id],
+        request.app.state.connection_pool,
+        request.app.state.gcs_storage,
+    )
     await session.delete(agent)
     await session.commit()
     return Message(message="Agent deleted successfully")
 
 
 @router.delete("/added-public/{agent_id}")
-async def remove_public_agent(current_user: CurrentUser, session: SessionDep, agent_id: str) -> Message:
+async def remove_public_agent(
+    current_user: CurrentUser, session: SessionDep, agent_id: str
+) -> Message:
     """
     Remove a public agent from the current user's list of added public agents.
     """
@@ -437,15 +509,22 @@ async def remove_public_agent(current_user: CurrentUser, session: SessionDep, ag
 
     link = await session.get(UserPublicAgentsLink, (agent.id, current_user.id))
     if not link:
-        raise HTTPException(status_code=404, detail="Public agent not found in your added list")
+        raise HTTPException(
+            status_code=404, detail="Public agent not found in your added list"
+        )
 
     await session.delete(link)
     await session.commit()
     return Message(message="Public agent removed successfully")
 
+
 @router.delete("/{agent_id}/skills/{skill_name}")
 async def delete_skill(
-    agent: AllowedAgent, current_user: CurrentUser, skill_name: str, session: SessionDep, request: Request
+    agent: AllowedAgent,
+    current_user: CurrentUser,
+    skill_name: str,
+    session: SessionDep,
+    request: Request,
 ) -> Message:
     """
     Delete a skill from an agent.
@@ -456,7 +535,9 @@ async def delete_skill(
     # skill_name arrives bare (see get_skill_names); agent.skill_files stores
     # the "{name}/SKILL.md" form, so the filter must reconstruct it to match.
     skill_entry = f"{skill_name}/SKILL.md"
-    agent.sqlmodel_update({"skill_files": [s for s in agent.skill_files if s != skill_entry]})
+    agent.sqlmodel_update(
+        {"skill_files": [s for s in agent.skill_files if s != skill_entry]}
+    )
     await session.commit()
     await session.refresh(agent)
 
@@ -465,8 +546,11 @@ async def delete_skill(
 
     return Message(message="Skill deleted successfully")
 
+
 @router.delete("/{agent_id}/profile-picture")
-async def delete_profile_picture(agent: AllowedAgent, current_user: CurrentUser, request: Request) -> Message:
+async def delete_profile_picture(
+    agent: AllowedAgent, current_user: CurrentUser, request: Request
+) -> Message:
     """
     Delete the profile picture of an agent.
     """

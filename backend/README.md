@@ -1,4 +1,4 @@
-# FastAPI Project - Backend
+# Conduit - Backend
 
 ## Requirements
 
@@ -91,35 +91,22 @@ Nevertheless, if it doesn't detect a change but a syntax error, it will just sto
 
 ## Backend tests
 
-To test the backend run:
-
-```console
-$ bash ./scripts/test.sh
-```
-
-The tests run with Pytest, modify and add tests to `./backend/tests/`.
-
-If you use GitHub Actions the tests will run automatically.
-
-### Test running stack
-
-If your stack is already up and you just want to run the tests, you can use:
+The tests in `tests/` call the API in-process with `httpx.AsyncClient`, against a real Postgres and Redis. They need both running and migrated. To use throwaway containers instead of your dev database:
 
 ```bash
-docker compose exec backend bash scripts/tests-start.sh
+docker run --rm -d --name conduit-test-db -p 5433:5432 -e POSTGRES_PASSWORD=testpassword -e POSTGRES_DB=app_test postgres:18
+docker run --rm -d --name conduit-test-redis -p 6380:6379 redis:7.4-alpine redis-server --requirepass testpassword
+
+export POSTGRES_SERVER=localhost POSTGRES_PORT=5433 POSTGRES_PASSWORD=testpassword POSTGRES_DB=app_test
+export REDIS_SERVER=localhost REDIS_PORT=6380 REDIS_PASSWORD=testpassword
+
+uv run bash scripts/prestart.sh   # migrations, LangGraph tables, first superuser
+uv run bash scripts/test.sh       # pytest + coverage (extra args go to pytest)
+
+docker stop conduit-test-db conduit-test-redis
 ```
 
-That `/app/scripts/tests-start.sh` script just calls `pytest` after making sure that the rest of the stack is running. If you need to pass extra arguments to `pytest`, you can pass them to that command and they will be forwarded.
-
-For example, to stop on first error:
-
-```bash
-docker compose exec backend bash scripts/tests-start.sh -x
-```
-
-### Test Coverage
-
-When the tests are run, a file `htmlcov/index.html` is generated, you can open it in your browser to see the coverage of the tests.
+Coverage HTML is written to `htmlcov/index.html`. The same setup runs in GitHub Actions (`.github/workflows/test-backend.yml`) on every push to `main` and on pull requests.
 
 ## Migrations
 

@@ -1,16 +1,13 @@
 import uuid
 from typing import Any
 
-from six import u
-from sqlmodel import Session, select
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.security import get_password_hash, verify_password
 from app.models import (
     Agent,
     AgentCreate,
-    Thread,
-    ThreadCreate,
     User,
     UserCreate,
     UserUpdate,
@@ -27,7 +24,9 @@ async def create_user(*, session: AsyncSession, user_create: UserCreate) -> User
     return db_obj
 
 
-async def update_user(*, session: AsyncSession, db_user: User, user_in: UserUpdate) -> Any:
+async def update_user(
+    *, session: AsyncSession, db_user: User, user_in: UserUpdate
+) -> Any:
     user_data = user_in.model_dump(exclude_unset=True)
     extra_data = {}
     if "password" in user_data:
@@ -52,7 +51,9 @@ async def get_user_by_email(*, session: AsyncSession, email: str) -> User | None
 DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZmYjE2NzZlZjY0ZWY3ZGRkY2U2OWFjNjk"
 
 
-async def authenticate(*, session: AsyncSession, email: str, password: str) -> User | None:
+async def authenticate(
+    *, session: AsyncSession, email: str, password: str
+) -> User | None:
     db_user = await get_user_by_email(session=session, email=email)
     if not db_user:
         # Prevent timing attacks by running password verification even when user doesn't exist

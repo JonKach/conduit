@@ -1,25 +1,23 @@
-from pyrate_limiter import RedisBucket
+import io
+from typing import Any, cast
+
 import aiohttp
 import sentry_sdk
+from deepagents import create_deep_agent
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from fastapi.routing import APIRoute
+from gcloud.aio.storage import Storage
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+from redis.asyncio import Redis
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
 from app.core.config import settings
-from psycopg import AsyncConnection
-from typing import Literal, Any, cast
-from deepagents import create_deep_agent
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from gcloud.aio.storage import Storage
-import json
-import io
 
-from redis.asyncio import Redis
-from pyrate_limiter import Duration, Limiter, Rate, RedisBucket
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
@@ -28,20 +26,24 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
     sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     connection_pool = AsyncConnectionPool(
         conninfo=str(settings.SYNC_SQLALCHEMY_DATABASE_URI),
-        min_size=2, max_size=20,
+        min_size=2,
+        max_size=20,
         kwargs={"autocommit": True, "row_factory": dict_row},
     )
-    typed_postgres_pool = cast(AsyncConnectionPool[AsyncConnection[dict[str, Any]]], connection_pool)
+    typed_postgres_pool = cast(
+        AsyncConnectionPool[AsyncConnection[dict[str, Any]]], connection_pool
+    )
     await typed_postgres_pool.open()
     app.state.connection_pool = typed_postgres_pool
 
     checkpointer = AsyncPostgresSaver(typed_postgres_pool)
     app.state.read_agent = create_deep_agent(
-        model="google_genai:gemini-3.1-flash-lite",   # constructed, never invoked
+        model="google_genai:gemini-3.1-flash-lite",  # constructed, never invoked
         checkpointer=checkpointer,
     )
 
@@ -56,11 +58,12 @@ async def lifespan(app: FastAPI):
     await typed_postgres_pool.close()
     await redis_client.aclose()
 
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Set all CORS enabled origins
@@ -76,13 +79,10 @@ if settings.all_cors_origins:
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 if settings.ENVIRONMENT != "local":
-    # api/main.py only mounts the private (unauthenticated user-creation)
-    # router when ENVIRONMENT=="local" - but that mount is one bad/missing
-    # env var away from shipping to prod. Check the ACTUAL mounted route
-    # table too, and refuse to start rather than silently serving it.
+    # failsafe to prevent dev-only private routes from being mounted in staging/production
     _private_prefix = f"{settings.API_V1_STR}/private"
     _leaked_private_routes = [
-        route.path
+        route.path  # type: ignore
         for route in app.routes
         if getattr(route, "path", "").startswith(_private_prefix)
     ]

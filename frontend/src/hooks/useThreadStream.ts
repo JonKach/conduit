@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react"
 
-import { OpenAPI, type ChatRequest } from "@/client"
+import { type ChatRequest, OpenAPI } from "@/client"
 
 export type ThreadStreamEventType =
   | "start"
@@ -58,7 +58,9 @@ export function useThreadStream({
         )
 
         if (!response.ok || !response.body) {
-          throw new Error(`Stream request failed with status ${response.status}`)
+          throw new Error(
+            `Stream request failed with status ${response.status}`,
+          )
         }
 
         const reader = response.body.getReader()

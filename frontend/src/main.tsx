@@ -19,10 +19,7 @@ OpenAPI.TOKEN = async () => {
 }
 
 const handleApiError = (error: Error) => {
-  // 401 = the session itself is invalid/expired -> force a fresh login.
-  // 403 = a valid session lacks permission for this one action (e.g. trying
-  // to add your own agent as a favorite, or editing someone else's agent) --
-  // that should surface as an error toast on the action, not log you out.
+  // Only 401 (invalid/expired session) logs out; 403 is handled per action.
   if (error instanceof ApiError && error.status === 401) {
     localStorage.removeItem("access_token")
     window.location.href = "/login"

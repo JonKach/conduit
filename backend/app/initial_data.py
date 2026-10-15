@@ -1,8 +1,6 @@
 import asyncio
 import logging
 
-from sqlmodel.ext.asyncio.session import AsyncSession
-
 from app.core.db import AsyncSessionLocal, init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -21,4 +19,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-   asyncio.run(main())
+    asyncio.run(main())

@@ -2,14 +2,14 @@ import { EllipsisVertical } from "lucide-react"
 import { useState } from "react"
 
 import type { ThreadPublic } from "@/client"
+import DeleteThread from "@/components/Agents/DeleteThread"
+import RenameThread from "@/components/Agents/RenameThread"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import DeleteThread from "@/components/Agents/DeleteThread"
-import RenameThread from "@/components/Agents/RenameThread"
 
 interface ThreadActionsMenuProps {
   thread: ThreadPublic

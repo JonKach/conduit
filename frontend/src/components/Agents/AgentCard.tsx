@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
 import { Bot } from "lucide-react"
-
-import { AgentsService, type AgentPublic } from "@/client"
+import { type AgentPublic, AgentsService } from "@/client"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -11,7 +11,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { getInitials } from "@/utils"
-import { useNavigate } from "@tanstack/react-router"
 
 interface AgentCardProps {
   agent: AgentPublic
@@ -30,7 +29,10 @@ const AgentCard = ({ agent }: AgentCardProps) => {
   })
 
   return (
-    <Card className="h-full gap-3 py-4 transition-colors hover:outline-2 hover:outline-zinc-300 dark:hover:outline-zinc-700 cursor-pointer" onClick={() => navigate({ to: `/agents/${agent.id}` })}>
+    <Card
+      className="h-full gap-3 py-4 transition-colors hover:outline-2 hover:outline-zinc-300 dark:hover:outline-zinc-700 cursor-pointer"
+      onClick={() => navigate({ to: `/agents/${agent.id}` })}
+    >
       <CardHeader className="px-4">
         <div className="flex items-start justify-between gap-2">
           <Avatar className="size-10">
@@ -38,7 +40,11 @@ const AgentCard = ({ agent }: AgentCardProps) => {
               <AvatarImage src={profilePictureLink} alt={agent.name} />
             ) : null}
             <AvatarFallback className="bg-zinc-600 text-white">
-              {agent.name ? getInitials(agent.name) : <Bot className="size-4" />}
+              {agent.name ? (
+                getInitials(agent.name)
+              ) : (
+                <Bot className="size-4" />
+              )}
             </AvatarFallback>
           </Avatar>
           {agent.is_public && (

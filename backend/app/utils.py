@@ -15,17 +15,10 @@ from app.core.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Rasterized (not SVG - Outlook desktop won't render <img src="*.svg">) brand
-# wordmark. It's embedded directly in each email as a CID (Content-ID) MIME
-# attachment rather than linked by URL: the recipient's mail client renders
-# HTML on THEIR machine, with no access to our filesystem and no server to
-# resolve a relative or local path against - it can only fetch a real,
-# publicly-reachable https:// URL, or read bytes we ship inline in the
-# message itself. CID embedding needs no hosting at all and works
-# identically in local/staging/prod, so every template references the logo
-# as `src="cid:logo"` and send_email() attaches these bytes under that id.
 EMAIL_LOGO_CID = "logo"
-EMAIL_LOGO_PATH = Path(__file__).parent / "email-templates" / "src" / "conduit-logo-email.png"
+EMAIL_LOGO_PATH = (
+    Path(__file__).parent / "email-templates" / "src" / "conduit-logo-email.png"
+)
 EMAIL_LOGO_BYTES = EMAIL_LOGO_PATH.read_bytes()
 
 
@@ -49,17 +42,9 @@ def send_email(
     subject: str = "",
     html_content: str = "",
 ) -> None:
-    """Best-effort send: a delivery (or configuration) failure is logged and
-    swallowed rather than raised, so callers like password recovery can
-    always return a uniform response regardless of whether the send actually
-    worked - required to not leak account existence via a 500 vs 200 split.
-    """
     if not settings.emails_enabled:
-        logger.warning(
-            "send_email skipped: no SMTP configuration for email variables"
-        )
+        logger.warning("send_email skipped: no SMTP configuration for email variables")
         return
-    # Ensure mail_from matches type expected by emails.Message: either a str or (name, email)
     from_name = settings.EMAILS_FROM_NAME
     from_email = settings.EMAILS_FROM_EMAIL or ""
     mail_from = (from_name, from_email) if from_name else from_email
@@ -68,8 +53,7 @@ def send_email(
         html=html_content,
         mail_from=mail_from,
     )
-    # Every template embeds the logo via `src="cid:logo"`; attach the actual
-    # bytes under that same content_id so it resolves without any hosting.
+
     message.attach(
         filename="conduit-logo-email.png",
         content_disposition="inline",

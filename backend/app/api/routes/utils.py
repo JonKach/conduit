@@ -1,46 +1,44 @@
+import asyncio
+import json
+import logging
 from pathlib import Path
 
-from lxml.html.builder import B
-from _asyncio import Future
-from app.core.config import settings
-from fastapi_cloud_cli.commands.env import delete
-import asyncio
 from fastapi import APIRouter, Depends
 from fastapi_limiter.decorators import skip_limiter
 from fastapi_limiter.depends import RateLimiter
+from gcloud.aio.storage import Bucket
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres.aio import AsyncPostgresStore
 from pydantic.networks import EmailStr
-from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, get_current_active_superuser
-from app.core.db import AsyncSessionLocal
+from app.api.deps import get_current_active_superuser, get_current_user
+from app.core.config import settings
 from app.core.security import general_bucket, user_or_ip_identifier
-from app.models import Agent, Message, Thread
+from app.models import Message
 from app.utils import generate_test_email, send_email
-from gcloud.aio.storage import Storage, Bucket, Blob
-import json
 
 router = APIRouter(
     prefix="/utils",
     tags=["utils"],
-    dependencies=[Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))],
+    dependencies=[
+        Depends(RateLimiter(general_bucket, identifier=user_or_ip_identifier))
+    ],
 )
 
-# Loaded once at import time instead of re-reading + re-parsing the file (and
-# leaking the handle) on every single request to this endpoint.
+logger = logging.getLogger(__name__)
+
 _AVAILABLE_TOOLS: list[str] = json.loads(
     (Path(__file__).resolve().parent.parent.parent / "available_tools.json").read_text()
 )["available_tools"]
 
 
-@router.get("/get-tools/")
-def get_tools(current_user: CurrentUser) -> list[str]:
+@router.get("/get-tools/", dependencies=[Depends(get_current_user)])
+def get_tools() -> list[str]:
     """
-    Get available tools. Its only frontend callers (EditAgent, AddAgent) are
-    both behind the authenticated app shell, so this never needed to be public.
+    Get available tools.
     """
     return _AVAILABLE_TOOLS
+
 
 @router.post(
     "/test-email/",
@@ -63,15 +61,12 @@ def test_email(email_to: EmailStr) -> Message:
 @router.get("/health-check/")
 @skip_limiter
 async def health_check() -> bool:
-    # Must stay public and unthrottled: compose.yml and the ALB/orchestrator
-    # health probe hit this constantly, and it's already the one endpoint
-    # with nothing sensitive to protect.
     return True
 
 
 async def delete_langgraph_threads(
-    thread_ids: list[str], 
-    connection_pool, 
+    thread_ids: list[str],
+    connection_pool,
     gcs_storage,
 ) -> None:
     """
@@ -89,13 +84,17 @@ async def delete_langgraph_threads(
             try:
                 await checkpointer.adelete_thread(thread_id)
             except Exception as e:
-                print(f"Failed to delete thread {thread_id}: {e}")
+                logger.warning("Failed to delete thread %s: %s", thread_id, e)
 
-    await asyncio.gather(*(delete_thread_files(tid) for tid in thread_ids), return_exceptions=True)
+    await asyncio.gather(
+        *(delete_thread_files(tid) for tid in thread_ids), return_exceptions=True
+    )
 
     bucket = Bucket(gcs_storage, settings.GCS_BUCKET_NAME)
 
-    gcs_search_tasks = [bucket.list_blobs(prefix=f"agent-files/{tid}/") for tid in thread_ids]
+    gcs_search_tasks = [
+        bucket.list_blobs(prefix=f"agent-files/{tid}/") for tid in thread_ids
+    ]
 
     search_results = await asyncio.gather(*gcs_search_tasks, return_exceptions=True)
 
@@ -106,13 +105,18 @@ async def delete_langgraph_threads(
             try:
                 await gcs_storage.delete(settings.GCS_BUCKET_NAME, blob_name)
             except Exception as e:
-                print(f"Failed to delete blob {blob_name} for thread {thread_id}: {e}")
+                logger.warning(
+                    "Failed to delete blob %s for thread %s: %s",
+                    blob_name,
+                    thread_id,
+                    e,
+                )
 
     delete_file_tasks = []
 
     for thread_id, result in zip(thread_ids, search_results, strict=True):
         if isinstance(result, Exception):
-            print(f"Failed to fetch documents for thread {thread_id}: {result}")
+            logger.warning("Failed to list files for thread %s: %s", thread_id, result)
             continue
 
         for item in result:
@@ -121,8 +125,10 @@ async def delete_langgraph_threads(
     if delete_file_tasks:
         await asyncio.gather(*delete_file_tasks, return_exceptions=True)
 
-async def search_and_delete(search_tasks, store: AsyncPostgresStore, resources: list) -> None:
 
+async def search_and_delete(
+    search_tasks, store: AsyncPostgresStore, resources: list
+) -> None:
     search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
     sem = asyncio.Semaphore(20)
@@ -132,12 +138,14 @@ async def search_and_delete(search_tasks, store: AsyncPostgresStore, resources: 
             try:
                 await store.adelete(namespace, key)
             except Exception as e:
-                print(f"Failed to delete ({namespace}, {key}): {e}")
+                logger.warning(
+                    "Failed to delete store item (%s, %s): %s", namespace, key, e
+                )
 
     delete_tasks = []
     for resource, result in zip(resources, search_results, strict=True):
         if isinstance(result, Exception):
-            print(f"Failed to fetch documents for resource {resource}: {result}")
+            logger.warning("Failed to search store for %s: %s", resource, result)
             continue
 
         for item in result:
@@ -146,7 +154,10 @@ async def search_and_delete(search_tasks, store: AsyncPostgresStore, resources: 
     if delete_tasks:
         await asyncio.gather(*delete_tasks)
 
-async def delete_agent_store(agent_ids: list[str], connection_pool, gcs_storage) -> None:
+
+async def delete_agent_store(
+    agent_ids: list[str], connection_pool, gcs_storage
+) -> None:
     """
     Delete all long-term store entries (skills & memories) for a list of agent IDs.
     """
@@ -156,18 +167,18 @@ async def delete_agent_store(agent_ids: list[str], connection_pool, gcs_storage)
 
     store = AsyncPostgresStore(connection_pool)
 
-    search_tasks = [
-        store.asearch((agent_id,), limit=1000) for agent_id in agent_ids
-    ]
+    search_tasks = [store.asearch((agent_id,), limit=1000) for agent_id in agent_ids]
 
     delete_profile_picture_tasks = [
-        gcs_storage.delete(settings.GCS_BUCKET_NAME, f"agent-profiles/{agent_id}") for agent_id in agent_ids
+        gcs_storage.delete(settings.GCS_BUCKET_NAME, f"agent-profiles/{agent_id}")
+        for agent_id in agent_ids
     ]
 
     await search_and_delete(search_tasks, store, agent_ids)
 
     if delete_profile_picture_tasks:
         await asyncio.gather(*delete_profile_picture_tasks)
+
 
 async def delete_user_memories(user_id: str, connection_pool) -> None:
     """

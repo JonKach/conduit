@@ -19,7 +19,9 @@ const Markdown = ({ content, className }: MarkdownProps) => {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <p className="whitespace-pre-wrap">{children}</p>,
+          p: ({ children }) => (
+            <p className="whitespace-pre-wrap">{children}</p>
+          ),
           a: ({ children, href }) => (
             <a
               href={href}
@@ -67,7 +69,10 @@ const Markdown = ({ content, className }: MarkdownProps) => {
               )
             }
             return (
-              <code className={cn("font-mono text-[0.85em]", codeClassName)} {...props}>
+              <code
+                className={cn("font-mono text-[0.85em]", codeClassName)}
+                {...props}
+              >
                 {children}
               </code>
             )

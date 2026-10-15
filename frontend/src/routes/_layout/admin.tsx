@@ -19,11 +19,7 @@ function getUsersQueryOptions() {
 export const Route = createFileRoute("/_layout/admin")({
   component: Admin,
   beforeLoad: async ({ context }) => {
-    // Reuse the ["currentUser"] cache the parent _layout route's beforeLoad
-    // already warmed, instead of a bare readUserMe() call outside
-    // react-query - that bypassed main.tsx's 401 handler entirely (a 401
-    // here landed in the root errorComponent instead of redirecting to
-    // /login), and duplicated a request that just ran one route up.
+    // Reuses the currentUser cache warmed by the parent _layout route.
     const user = await context.queryClient.ensureQueryData({
       queryKey: ["currentUser"],
       queryFn: UsersService.readUserMe,

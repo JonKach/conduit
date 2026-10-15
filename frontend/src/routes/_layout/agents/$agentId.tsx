@@ -1,14 +1,13 @@
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { ArrowLeft } from "lucide-react"
 import { Suspense } from "react"
-
 import { AgentsService } from "@/client"
 import AgentInfoPanel from "@/components/Agents/AgentInfoPanel"
 import CreateThread from "@/components/Agents/CreateThread"
 import ThreadsList from "@/components/Agents/ThreadsList"
 import PendingThreads from "@/components/Pending/PendingThreads"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeft } from "lucide-react"
 
 function getAgentQueryOptions(agentId: string) {
   return {
@@ -27,21 +26,24 @@ function AgentDetailContent({ agentId }: { agentId: string }) {
 
   return (
     <>
-    <ArrowLeft className="size-6 text-muted-foreground hover:text-foreground cursor-pointer" onClick={() => navigate({ to: '/'})} />
-    <div className="flex flex-1 flex-col gap-6 lg:flex-row mt-5">
-      <div className="lg:w-96 lg:shrink-0">
-        <AgentInfoPanel agent={agent} />
-      </div>
-      <div className="flex flex-1 flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Threads</h2>
-          <CreateThread agentId={agentId} />
+      <ArrowLeft
+        className="size-6 text-muted-foreground hover:text-foreground cursor-pointer"
+        onClick={() => navigate({ to: "/" })}
+      />
+      <div className="flex flex-1 flex-col gap-6 lg:flex-row mt-5">
+        <div className="lg:w-96 lg:shrink-0">
+          <AgentInfoPanel agent={agent} />
         </div>
-        <Suspense fallback={<PendingThreads />}>
-          <ThreadsList agentId={agentId} />
-        </Suspense>
+        <div className="flex flex-1 flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Threads</h2>
+            <CreateThread agentId={agentId} />
+          </div>
+          <Suspense fallback={<PendingThreads />}>
+            <ThreadsList agentId={agentId} />
+          </Suspense>
+        </div>
       </div>
-    </div>
     </>
   )
 }

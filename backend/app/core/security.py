@@ -30,7 +30,6 @@ password_hash = PasswordHash(
 )
 
 
-
 ALGORITHM = "HS256"
 
 
@@ -50,12 +49,11 @@ def verify_password(
 def get_password_hash(password: str) -> str:
     return password_hash.hash(password)
 
+
 async def user_or_ip_identifier(request: Request) -> str:
     """Rate-limit key: per authenticated user when possible, else per client IP.
 
-    Behind a shared dev proxy every request can appear to come from the same
-    IP, and unauthenticated routes (login/signup) have no user yet, so this
-    prefers the JWT subject and falls back to fastapi_limiter's default
+    Prefers the JWT subject and falls back to fastapi_limiter's default
     IP-based identifier.
     """
     auth_header = request.headers.get("Authorization", "")
@@ -73,14 +71,7 @@ async def user_or_ip_identifier(request: Request) -> str:
 
 
 class KeyedRedisBucketFactory(BucketFactory):
-    """Gives each distinct rate-limit key its own Redis bucket.
-
-    fastapi_limiter's RateLimiter already computes a per-identifier key, but
-    pyrate_limiter's stock SingleBucketFactory ignores it and checks every
-    request against the same shared counter - so a single global bucket
-    means one caller's traffic can exhaust every other caller's quota. This
-    factory creates (and caches) one Redis-backed bucket per key instead.
-    """
+    """Gives each distinct rate-limit key its own Redis bucket."""
 
     def __init__(self, rates: list[Rate], redis: Redis, prefix: str):
         self.rates = rates
@@ -114,10 +105,6 @@ premium_bucket = Limiter(
     KeyedRedisBucketFactory([Rate(2, Duration.MINUTE)], redis_conn, "api-call-limits")
 )
 
-# Tighter buckets for unauthenticated auth endpoints. Keyed by IP+path (via
-# fastapi_limiter's default_identifier, not user_or_ip_identifier) since there
-# is no user yet and a caller must not be able to use a *different* valid
-# token to dodge one IP's brute-force counter.
 auth_bucket = Limiter(
     KeyedRedisBucketFactory(
         [Rate(10, Duration.MINUTE), Rate(60, Duration.HOUR)], redis_conn, "auth-limits"

@@ -1,26 +1,21 @@
-from mypy.nodes import Statement
-from sqlmodel import select
-from httpx import Auth
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
+from sqlalchemy.orm import selectinload
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core import security
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
-from app.models import Agent, TokenPayload, User, Thread
-from sqlalchemy.orm import selectinload
+from app.models import Agent, Thread, TokenPayload, User
 
-from pyrate_limiter import Limiter
-from fastapi_limiter.depends import RateLimiter
-
-# This checks for the presence of the Authorization header and extracts the token from it. The tokenUrl parameter is just used by FastAPI to generate the correct URL for the login endpoint in the OpenAPI documentation.
+# Extracts the bearer token; tokenUrl only drives the OpenAPI login form.
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/login/access-token"
 )
@@ -34,12 +29,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
+
 async def get_current_user(session: SessionDep, token: TokenDep) -> User:
-    # 401 (not 403) here: the token itself is missing/invalid/expired, i.e. the
-    # session is unauthenticated. This is what lets the frontend's "log out on
-    # 401" handler (main.tsx) fire and bounce an expired session to /login,
-    # instead of the app quietly breaking. 403 is reserved for a *valid*
-    # session that lacks permission (see get_current_active_superuser below).
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -54,8 +45,6 @@ async def get_current_user(session: SessionDep, token: TokenDep) -> User:
         raise credentials_exception
     user = await session.get(User, token_data.sub)
     if not user:
-        # A token for a deleted account is just as invalid a session as a bad
-        # token - treat it the same way rather than leaking user existence.
         raise credentials_exception
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
@@ -72,6 +61,7 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
         )
     return current_user
 
+
 async def get_agent(session: SessionDep, current_user: CurrentUser, agent_id: str):
     statement = (
         select(Agent)
@@ -83,17 +73,22 @@ async def get_agent(session: SessionDep, current_user: CurrentUser, agent_id: st
     agent = agent.first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if not current_user.is_superuser and (agent.owner_id != current_user.id) and not agent.is_public:
+    if (
+        not current_user.is_superuser
+        and (agent.owner_id != current_user.id)
+        and not agent.is_public
+    ):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return agent
 
+
 AllowedAgent = Annotated[Agent, Depends(get_agent)]
 
-async def get_thread(session: SessionDep, current_user: CurrentUser, agent: AllowedAgent, thread_id: str):
-    statement = (
-        select(Thread)
-        .where(Thread.id == thread_id)
-    )
+
+async def get_thread(
+    session: SessionDep, current_user: CurrentUser, agent: AllowedAgent, thread_id: str
+):
+    statement = select(Thread).where(Thread.id == thread_id)
     db_thread = await session.exec(statement)
     db_thread = db_thread.first()
     if not db_thread or db_thread.agent_id != agent.id:
@@ -101,5 +96,6 @@ async def get_thread(session: SessionDep, current_user: CurrentUser, agent: Allo
     if not current_user.is_superuser and (db_thread.user_id != current_user.id):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return db_thread
+
 
 AllowedThread = Annotated[Thread, Depends(get_thread)]

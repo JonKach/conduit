@@ -66,8 +66,8 @@ const DeleteThread = ({ thread, onSuccess }: DeleteThreadProps) => {
           <DialogHeader>
             <DialogTitle>Delete Thread</DialogTitle>
             <DialogDescription>
-              This thread and its messages will be permanently deleted. Are
-              you sure? You will not be able to undo this action.
+              This thread and its messages will be permanently deleted. Are you
+              sure? You will not be able to undo this action.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4">

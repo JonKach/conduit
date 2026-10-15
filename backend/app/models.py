@@ -1,27 +1,25 @@
-from pyexpat.errors import messages
-import shortuuid
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
+import shortuuid
 from pydantic import EmailStr
 from sqlalchemy import DateTime
-from sqlmodel import Field, Relationship, SQLModel, Column, JSON
 from sqlalchemy.orm import Mapped
-from typing import Literal
+from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 
 def get_datetime_utc() -> datetime:
     return datetime.now(timezone.utc)
 
+
 class UserPublicAgentsLink(SQLModel, table=True):
-    agent_id: str = Field(
-        foreign_key="agent.id", nullable=False, primary_key=True
-    )
-    user_id: uuid.UUID = Field(
-        foreign_key="user.id", nullable=False, primary_key=True
-    )
+    agent_id: str = Field(foreign_key="agent.id", nullable=False, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, primary_key=True)
+
 
 # -------------------------------------------------------------------------------------
+
 
 # Shared properties
 class UserBase(SQLModel):
@@ -47,9 +45,11 @@ class UserUpdate(UserBase):
     email: EmailStr | None = Field(default=None, max_length=255)  # type: ignore[assignment]
     password: str | None = Field(default=None, min_length=8, max_length=128)
 
+
 class UserUpdateMe(SQLModel):
     full_name: str | None = Field(default=None, max_length=255)
     email: EmailStr | None = Field(default=None, max_length=255)
+
 
 class UpdatePassword(SQLModel):
     current_password: str = Field(min_length=8, max_length=128)
@@ -69,14 +69,17 @@ class User(UserBase, table=True):
         back_populates="added_by_users", link_model=UserPublicAgentsLink
     )
 
+
 # Properties to return via API, id is always required
 class UserPublic(UserBase):
     id: uuid.UUID
     created_at: datetime | None = None
 
+
 class UsersPublic(SQLModel):
     data: list[UserPublic]
     count: int
+
 
 # -------------------------------------------------------------------------------------
 
@@ -153,8 +156,10 @@ class ThreadBase(SQLModel):
 class ThreadCreate(ThreadBase):
     pass
 
+
 class ThreadUpdate(ThreadBase):
     pass
+
 
 class Thread(ThreadBase, table=True):
     id: str = Field(default_factory=shortuuid.uuid, primary_key=True)
@@ -162,9 +167,7 @@ class Thread(ThreadBase, table=True):
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
-    agent_id: str = Field(
-        foreign_key="agent.id", nullable=False, ondelete="CASCADE"
-    )
+    agent_id: str = Field(foreign_key="agent.id", nullable=False, ondelete="CASCADE")
     user_id: uuid.UUID = Field(
         foreign_key="user.id", nullable=False, ondelete="CASCADE"
     )
@@ -182,23 +185,29 @@ class ThreadsPublic(SQLModel):
     data: list[ThreadPublic]
     count: int
 
+
 class ThreadContentPublic(ThreadPublic):
     messages: list[dict]
 
+
 class ThreadWithAgentPublic(ThreadPublic):
     agent_name: str
+
 
 class RecentThreadsPublic(SQLModel):
     data: list[ThreadWithAgentPublic]
     count: int
 
+
 # -------------------------------------------------------------------------------------
+
 
 class ChatRequest(SQLModel):
     message: str
     model: str
     attached_files: list[str] = []
     file_read_mode: Literal["base64", "reference"] = "reference"
+
 
 # Generic message
 class Message(SQLModel):

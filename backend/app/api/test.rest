@@ -9,13 +9,13 @@
 @contentType = application/json
 
 # Tokens — populate these after running the login requests below
-@superuserToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODM4NzI5MjUsInN1YiI6ImVlYzhlMzFiLTUyZDgtNDFhMC1hYWI3LTcyNTg1ZjE3ZWM2YyJ9.yBSXd6A9XY_1uqNqXUcf1RfXTycMSlUFen8DRh4gTdY
-@userToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODM4NzI5MTYsInN1YiI6IjM5ZDE0ODdjLTVkYmQtNDEwYi04NTdiLTczZDRmYWZmZDQ0ZCJ9.I5O4XZNSAPTOgn6Bp5TLlV4qHqRzFmdXJKCJWb0Yd9E
+@superuserToken = <placeholder>
+@userToken = <placeholder>
 
 # IDs — populate these after creating resources
-@agentId = 5EDAE23GsbRKxgBjiVfgKn
-@threadId = ghpr3dBvERKgaKitWRRzUH
-@userId = 8d5016b9-33f2-420c-8391-f96c1c503f88
+@agentId = <placeholder>
+@threadId = <placeholder>
+@userId = <placeholder>
 
 
 # =============================================================================
@@ -56,14 +56,10 @@ GET {{baseUrl}}/users/
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [SUPERUSER] List users — with pagination
 GET {{baseUrl}}/users/?skip=0&limit=10
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [SUPERUSER] Create a new user
 POST {{baseUrl}}/users/
@@ -138,8 +134,6 @@ GET {{baseUrl}}/users/me
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Update current user (me)
 PATCH {{baseUrl}}/users/me
 Authorization: Bearer {{userToken}}
@@ -194,21 +188,15 @@ GET {{baseUrl}}/users/{{userId}}
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [SUPERUSER] Get user by ID — not found (expect 404)
 GET {{baseUrl}}/users/00000000-0000-0000-0000-000000000000
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [REGULAR USER] Get another user by ID — insufficient privileges (expect 403)
 GET {{baseUrl}}/users/{{userId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [SUPERUSER] Update a user by ID
 PATCH {{baseUrl}}/users/{{userId}}
@@ -267,25 +255,24 @@ DELETE {{baseUrl}}/users/{{userId}}
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Delete own account
 DELETE {{baseUrl}}/users/me
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] Delete own account — superuser self-delete (expect 403)
 DELETE {{baseUrl}}/users/me
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
 
----
-
-### Unauthenticated request — no token (expect 401/403)
+### Unauthenticated request — no token (expect 401)
 GET {{baseUrl}}/users/me
 
+
+### [AUTH] Check that a token is valid
+POST {{baseUrl}}/login/test-token
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
 
 # =============================================================================
 # AGENTS
@@ -296,28 +283,20 @@ GET {{baseUrl}}/agents/me
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] List own agents — with pagination
 GET {{baseUrl}}/agents/me?skip=0&limit=5
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] List public agents (regular user sees only is_public=true)
 GET {{baseUrl}}/agents/public
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [SUPERUSER] List public agents (superuser sees all agents)
 GET {{baseUrl}}/agents/public
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] Create a new agent
 POST {{baseUrl}}/agents/
@@ -353,7 +332,7 @@ Content-Type: {{contentType}}
 {
   "description": "No name agent",
   "system_prompt": "You are an assistant.",
-  "tools_config": {},
+  "tools_config": [],
   "is_public": false
 }
 
@@ -365,7 +344,7 @@ Content-Type: {{contentType}}
 {
   "name": "",
   "system_prompt": "You are an assistant.",
-  "tools_config": {},
+  "tools_config": [],
   "is_public": false
 }
 
@@ -374,29 +353,21 @@ GET {{baseUrl}}/agents/{{agentId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [SUPERUSER] Get agent by ID (superuser access)
 GET {{baseUrl}}/agents/{{agentId}}
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] Get agent — not found (expect 404)
 GET {{baseUrl}}/agents/nonexistentAgentId12345
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Get private agent owned by another user (expect 403)
 # Requires agentId to belong to a different user and is_public=false
 GET {{baseUrl}}/agents/{{agentId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] Update agent (full update, owner)
 PUT {{baseUrl}}/agents/{{agentId}}
@@ -407,7 +378,7 @@ Content-Type: {{contentType}}
   "name": "Updated Agent Name",
   "description": "Updated description",
   "system_prompt": "You are an updated assistant.",
-  "tools_config": {"key": "value"},
+  "tools_config": ["web_search"],
   "is_public": true
 }
 
@@ -420,38 +391,74 @@ Content-Type: {{contentType}}
   "name": "Ghost Update",
   "description": "Should not exist",
   "system_prompt": "N/A",
-  "tools_config": {},
+  "tools_config": [],
   "is_public": false
 }
-
----
 
 ### [AUTH] Delete agent (owner)
 DELETE {{baseUrl}}/agents/{{agentId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [SUPERUSER] Delete any agent
 DELETE {{baseUrl}}/agents/{{agentId}}
 Authorization: Bearer {{superuserToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] Delete agent owned by another user (expect 403)
 DELETE {{baseUrl}}/agents/{{agentId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Delete agent — not found (expect 404)
 DELETE {{baseUrl}}/agents/nonexistentAgentId12345
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
+
+### [AUTH] Marketplace sorted by popularity (how many users added each agent)
+GET {{baseUrl}}/agents/public?sort=popular
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+### [AUTH] Add another user's public agent to my list
+POST {{baseUrl}}/agents/added-public
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "agent_id": "{{agentId}}"
+}
+
+### [AUTH] Add own agent to my list (expect 403)
+# Requires agentId to belong to the current user
+POST {{baseUrl}}/agents/added-public
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+{
+  "agent_id": "{{agentId}}"
+}
+
+### [AUTH] List public agents I've added
+GET {{baseUrl}}/agents/added-public
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+### [AUTH] Remove a public agent from my list
+DELETE {{baseUrl}}/agents/added-public/{{agentId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+### [AUTH] List an agent's skill names
+GET {{baseUrl}}/agents/{{agentId}}/skills
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+### [AUTH] Get a skill's content
+GET {{baseUrl}}/agents/{{agentId}}/skills/research
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
 
 # =============================================================================
 # THREADS  (nested under /agents/{agent_id}/threads)
@@ -497,35 +504,25 @@ GET {{baseUrl}}/agents/{{agentId}}/threads/
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] List threads — with pagination
 GET {{baseUrl}}/agents/{{agentId}}/threads/?skip=0&limit=5
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] Get thread by ID
 GET {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Get thread — not found (expect 404)
 GET {{baseUrl}}/agents/{{agentId}}/threads/nonexistentThreadId
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Get thread — wrong agent_id (expect 404)
 GET {{baseUrl}}/agents/wrongAgentId/threads/{{threadId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
-
----
 
 ### [AUTH] Update thread name
 PATCH {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}
@@ -552,7 +549,7 @@ Content-Type: {{contentType}}
 
 {
   "message": "Hello, what can you help me with?",
-  "model": "claude-sonnet-4-6"
+  "model": "google_genai:gemini-3.1-flash-lite"
 }
 
 ### [AUTH] Stream — agent not found (expect 404)
@@ -562,10 +559,8 @@ Content-Type: {{contentType}}
 
 {
   "message": "Hello?",
-  "model": "claude-sonnet-4-6"
+  "model": "google_genai:gemini-3.1-flash-lite"
 }
-
----
 
 ### [AUTH] Stream — missing message field (expect 422)
 POST {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}/stream
@@ -573,10 +568,8 @@ Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
 {
-  "model": "claude-sonnet-4-6"
+  "model": "google_genai:gemini-3.1-flash-lite"
 }
-
----
 
 ### [AUTH] Stream — missing model field (expect 422)
 POST {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}/stream
@@ -587,23 +580,45 @@ Content-Type: {{contentType}}
   "message": "Hello?"
 }
 
----
+### [AUTH] Stop a running stream (expect 400 if nothing is running)
+POST {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}/stop_stream
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+### [AUTH] List files uploaded to a thread
+GET {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}/files
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+### [AUTH] Recent threads across all agents
+GET {{baseUrl}}/threads/recent
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
 
 ### [AUTH] Delete thread by ID
 DELETE {{baseUrl}}/agents/{{agentId}}/threads/{{threadId}}
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Delete thread — not found (expect 404)
 DELETE {{baseUrl}}/agents/{{agentId}}/threads/nonexistentThreadId
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}
 
----
-
 ### [AUTH] Delete thread — wrong agent_id (expect 404)
 DELETE {{baseUrl}}/agents/wrongAgentId/threads/{{threadId}}
+Authorization: Bearer {{userToken}}
+Content-Type: {{contentType}}
+
+
+# =============================================================================
+# UTILS
+# =============================================================================
+
+### Health check (public, not rate limited)
+GET {{baseUrl}}/utils/health-check/
+
+### [AUTH] Tools an agent can be configured with
+GET {{baseUrl}}/utils/get-tools/
 Authorization: Bearer {{userToken}}
 Content-Type: {{contentType}}

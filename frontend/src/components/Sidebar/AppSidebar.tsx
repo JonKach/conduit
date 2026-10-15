@@ -2,13 +2,13 @@ import { Briefcase, Home, Users } from "lucide-react"
 
 import { SidebarAppearance } from "@/components/Common/Appearance"
 import { Logo } from "@/components/Common/Logo"
+import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar"
-import { Separator } from "@/components/ui/separator"
 import useAuth from "@/hooks/useAuth"
 import { type Item, Main } from "./Main"
 import { RecentThreads } from "./RecentThreads"
